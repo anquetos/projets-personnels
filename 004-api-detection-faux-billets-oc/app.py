@@ -1,8 +1,7 @@
 # Importe les librairies
+import dash
 from dash import Dash, dcc, html, Input, Output
 from dash import dash_table
-
-import flask
 
 import plotly.express as px
 
@@ -15,7 +14,7 @@ import numpy as np
 from pathlib import Path
 import joblib
 
-app = Dash(__name__)
+app = dash.Dash(__name__)
 
 app.title = 'Outil de détection de faux billets'
 
