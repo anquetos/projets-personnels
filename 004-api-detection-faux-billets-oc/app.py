@@ -16,6 +16,9 @@ import joblib
 
 app = dash.Dash(__name__)
 
+# Pour publication render.com
+server = app.server
+
 app.title = 'Outil de détection de faux billets'
 
 # Supprime l'erreur liée au bouton qui est généré par un autre callback
