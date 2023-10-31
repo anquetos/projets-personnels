@@ -1,0 +1,7 @@
+/* Inclure la police Ubuntu depuis Google Fonts */
+@import url('https://fonts.googleapis.com/css?family=Ubuntu&display=swap');
+
+/* Utilisez la police Ubuntu pour le texte de la page */
+body {
+    font-family: 'Ubuntu', sans-serif;
+}
