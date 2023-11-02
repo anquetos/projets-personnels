@@ -1,5 +1,4 @@
 # Importe les librairies
-import dash
 from dash import Dash, dcc, html, Input, Output
 from dash import dash_table
 
@@ -14,9 +13,9 @@ import numpy as np
 from pathlib import Path
 import joblib
 
-app = dash.Dash(__name__)
+app = Dash(__name__)
 
-# Serveur render.com
+# Pour déploiement render.com
 server = app.server
 
 app.title = 'Outil de détection de faux billets'
