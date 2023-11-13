@@ -1,0 +1,6 @@
+# Fichier contenant ma clé personnelle
+api_key.json
+
+# Dossiers contenant résulatats des tests
+/csv/
+/json-files/
