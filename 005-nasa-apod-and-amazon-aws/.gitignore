@@ -3,4 +3,5 @@ api_key.json
 
 # Dossiers contenant résulatats des tests
 /csv/
-/json-files/
+/json/
+/test/
