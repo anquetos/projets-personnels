@@ -8,7 +8,7 @@ Chaque jour depuis juin 1995, sur son site [*Astronomy Picture of the Day*](http
 
 Les métadonnées associées à chaque image sont accessibles *via* l'API dédiée mise à diposition sur le portail [NASA Open APIs](https://api.nasa.gov/).
 
-Ce sont ces données qui servent de base. Elles seront ensuite nettoyées et enrichies de nouvelles *variables* pour créer le *dataset* final.
+Ce sont ces données qui serviront de base à ce projet. Elles seront ensuite nettoyées et enrichies de nouvelles *variables* pour créer le *dataset* final.
 
 ## &#128301; Etapes de création
 
@@ -22,7 +22,7 @@ L'ensemble du *process* ci-dessous est réalisé avec **Python** en utilisant no
 
 A chaque étape, un fichier JSON est généré pour chacune des dates de la période définie dans la requête.
 
-Le code complet est disponible dans le *notebook* XXXX.
+>Le code complet est disponible dans le *notebook* XXXX.
 
 <img title='NASA APOD process' src='./images/nasa-apod-process.svg' width='280px'>
 
