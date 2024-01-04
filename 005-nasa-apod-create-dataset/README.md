@@ -1,24 +1,30 @@
 # NASA Astronomy Picture of the Day (APOD)<br>Création d'un jeu de données
 
+<img title='NGC 1232 : A Grand Design Spiral Galaxy' src='./images/ngc-1232-a-grand-design-spiral-galaxy.jpg' width='360px'>
+
 ## &#128301; Présentation
 
 Chaque jour depuis juin 1995, sur son site [*Astronomy Picture of the Day*](https://apod.nasa.gov/apod/), la NASA présente une image différente de notre univers accompagnée d'une brève explication rédigée par un astronome professionnel.
 
 Les métadonnées associées à chaque image sont accessibles *via* l'API dédiée mise à diposition sur le portail [NASA Open APIs](https://api.nasa.gov/).
 
-Ce sont ces données qui servent de base puis elles seront nettoyées et enrichies de nouvelles *variables* pour créer le *dataset* final.
+Ce sont ces données qui servent de base. Elles seront ensuite nettoyées et enrichies de nouvelles *variables* pour créer le *dataset* final.
 
 ## &#128301; Etapes de création
 
-1. Extraction des données depuis l'API et enregistrement dans un fichier JSON (une date = un fichier).
+L'ensemble du *process* ci-dessous est réalisé avec **Python** en utilisant notamment `pathlib`, `requests`, `pillow` et `spacy`.
+
+1. Requête des données depuis l'API.
 2. Nettoyage du texte (ponctuation, espaces, etc.) pour les *features* `copyright`, `explanation` et `title` puis suppression des données inutiles.
 3. Ajout des informations relatives aux images (dimensions, format, etc.) puis extraction des données EXIF lorsqu'elles sont présentes.
 4. Création et ajout d'une liste de mots clés et de lieux en appliquant différentes méthodes de ***Natural Language Processing* (NLP)** sur la variable `explanation`.
 5. Compilation et exportation des données dans un fichier CSV.
 
-L'ensemble du process ci-dessus est réalisé en **Python** en utilisant notamment `pathlib`, `requests`, `pillow` et `spacy`.
+A chaque étape, un fichier JSON est généré pour chacune des dates de la période définie dans la requête.
 
-Le code utilisé est détaillé dans le *notebook* XXXX.
+Le code complet est disponible dans le *notebook* XXXX.
+
+<img title='NASA APOD process' src='./images/nasa-apod-process.svg' width='280px'>
 
 ## &#128301; Requête
 
