@@ -22,7 +22,7 @@ L'ensemble du *process* ci-dessous est réalisé avec **Python** en utilisant no
 
 A chaque étape, un fichier JSON est généré pour chacune des dates de la période définie dans la requête.
 
->Le code complet est disponible dans le *notebook* XXXX.
+>Le code complet est disponible dans le *notebook* [`nasa-apod-create-dataset`](./nasa-apod-create-dataset.ipynb).
 
 <img title='NASA APOD process' src='./images/nasa-apod-process.svg' width='280px'>
 

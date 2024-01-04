@@ -1,10 +1,11 @@
 # Fichier contenant ma clé personnelle
 api_key.json
 
-# Dossiers contenant résultats des tests
-/csv/
-/json/
+# Dossier contenant résultats des tests
 /test/
+
+# Dossier contenant les fichiers JSON
+/json/
 
 # Fichier draw.io
 nasa-apod-process.drawio
