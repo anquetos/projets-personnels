@@ -10,7 +10,7 @@ Ce projet a été réalisé dans un but pédagogique afin de développer mes com
 
 Chaque jour depuis juin 1995, sur son site [*Astronomy Picture of the Day*](https://apod.nasa.gov/apod/), la NASA présente une image différente de notre univers accompagnée d'une brève explication rédigée par un astronome professionnel.
 
-Les métadonnées associées à chaque image sont accessibles *via* l'API dédiée mise à diposition sur le portail [NASA Open APIs](https://api.nasa.gov/).
+Les métadonnées associées à chaque image sont accessibles *via* l'API dédiée mise à disposition sur le portail [NASA Open APIs](https://api.nasa.gov/).
 
 Ce sont ces données qui serviront de base à la construction du jeu de données final.
 
