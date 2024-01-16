@@ -88,7 +88,7 @@ def reverse_geocoding(lat_lon):
     lon = lat_lon[1]
     x = len(str(lat))
 
-    while True:
+    while x > 0:
 
         url = 'https://api-adresse.data.gouv.fr/reverse/'
         payload = {
@@ -106,9 +106,15 @@ def reverse_geocoding(lat_lon):
 
         x -= 1
 
-    data = {
+    if result:
+        data = {
             'city': result['properties']['city'],
             'context': result['properties']['context']
+        }
+    else:
+        data = {
+            'city': '-',
+            'context': '-'
         }
             
     return data
