@@ -159,6 +159,32 @@ class Client(object):
         return data
     
 
+    def order_hourly_weather_info(
+            self, id_station: str, start_date: str, end_date: str):
+        '''
+        Get an order number for asynchronous download of hourly weather
+        information for one observation station in a period of date.
+        Parameters :
+        - id_station : id number (string) ;
+        - start_date : start of period for the order (string) in ISO 8601 format
+        with TZ UTC AAAA-MM-JJThh:00:00Z ;
+        - end_date : end of period for the order (string) in ISO 8601 format
+        with TZ UTC AAAA-MM-JJThh:00:00Z.
+        '''
+        self.session.headers.update({'Accept': 'application/json'})
+        payload={
+            'id-station': id_station,
+            'date-deb-periode': start_date,
+            'date-fin-periode': end_date
+        }
+        response = self.request(
+            method='GET',
+            url='https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire',
+            params=payload
+        )
+
+        return response.json()['elaboreProduitAvecDemandeResponse']['return']
+    
     def order_daily_weather_info(
             self, id_station: str, start_date: str, end_date: str):
         '''
@@ -186,10 +212,10 @@ class Client(object):
         return response.json()['elaboreProduitAvecDemandeResponse']['return']
     
 
-    def get_daily_weather_info(self, order_number: str):
+    def get_order_data(self, order_number: str):
         '''
         Get the weather information data for a specific order generated with
-        'order_daily_weather_info() function'.
+        'order_daily_weather_daily() or 'order_daily_weather_info() function'.
         Parameter :
         - order_number (string).
         '''
