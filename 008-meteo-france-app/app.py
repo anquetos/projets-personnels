@@ -69,139 +69,160 @@ if st.session_state['selected']:
     
         st.markdown('### Station')
 
-        # Get the list of nearest observation stations
-        nearest_stations_list = find_nearest_stations(
-            df_stations, st.session_state['selected']['coordinates'])
-        
-        # Get the 'city' and 'context' of the nearest station
-        nearest_station_address = reverse_geocoding(
-            [
-                nearest_stations_list[0]['latitude'],
-                nearest_stations_list[0]['longitude']
-            ]
-        )
+        station = st.session_state['selected']
 
-        with st.expander(
-            f'{nearest_stations_list[0]['nom_usuel']} '
-            f'({nearest_station_address['city']}, '
-            f'{nearest_station_address['context']})'
-        ):
+        # Wrap below section in function to cache data and prevent 'rerun' if
+        # selected station doesn't change
+        @st.cache_data
+        def get_display_station_info(station):
 
-            # Build and display information text about the nearest station
-            nearest_station_text = f'''
-                * id : {nearest_stations_list[0]['id_station']}
-                * Altitude : {nearest_stations_list[0]['altitude']} m
-                * Distance de {st.session_state['selected']['label']} : 
-                {nearest_stations_list[0]['distance']:.1f} km
-                * Date d'ouverture : {nearest_stations_list[0]['date_ouverture']}
-            '''
-            st.markdown(nearest_station_text)
+            # Get the list of nearest observation stations
+            nearest_stations_list = find_nearest_stations(
+                df_stations, station['coordinates'])
+            
+            # Get the 'city' and 'context' of the nearest station
+            nearest_station_address = reverse_geocoding(
+                [
+                    nearest_stations_list[0]['latitude'],
+                    nearest_stations_list[0]['longitude']
+                ]
+            )
 
+            with st.expander(
+                f'{nearest_stations_list[0]['nom_usuel']} '
+                f'({nearest_station_address['city']}, '
+                f'{nearest_station_address['context']})'
+            ):
+
+                # Build and display information text about the nearest station
+                nearest_station_text = f'''
+                    * id : {nearest_stations_list[0]['id_station']}
+                    * Altitude : {nearest_stations_list[0]['altitude']} m
+                    * Distance de {st.session_state['selected']['label']} : 
+                    {nearest_stations_list[0]['distance']:.1f} km
+                    * Date d'ouverture : {nearest_stations_list[0]['date_ouverture']}
+                '''
+                st.markdown(nearest_station_text)
+
+                station_id = nearest_stations_list[0]['id_station']
+
+            return station_id
+            
+        station_id = get_display_station_info(station)
 
         st.markdown('### Observations')
 
         st.markdown('##### Temps réel')
 
-        # Get current weather informations from the nearest station
-        current_obs = Client().get_observation(
-            nearest_stations_list[0]['id_station'], '')
-        
-        # Calculate utc time of the previous weather information
-        previous_time = (
-            datetime.strptime(
-                current_obs['validity_time_utc'], '%Y-%m-%dT%H:%M:%SZ')
-            - timedelta(hours=1)
-        )
+        # Wrap below section in function to cache data and prevent 'rerun' if 
+        # station_id doesn't change
+        @st.cache_data
+        def get_display_current_data(station_id):
 
-        # Get previous weather informations from the nearest station
-        previous_obs = Client().get_observation(
-            nearest_stations_list[0]['id_station'],
-            previous_time.strftime('%Y-%m-%dT%H:%M:%SZ')
-        )
+            # Get current weather informations from the nearest station
+            current_obs = Client().get_observation(
+                station_id, '')
+            
+            # Calculate utc time of the previous weather information
+            previous_time = (
+                datetime.strptime(
+                    current_obs['validity_time_utc'], '%Y-%m-%dT%H:%M:%SZ')
+                - timedelta(hours=1)
+            )
 
-        # Function to calculate 'delta' for st.metric
-        def delta(x, y):
-            if x == y:
-                delta = None
-            elif x and y is not None:
-                delta = x - y
-            else:
-                delta = None
+            # Get previous weather informations from the nearest station
+            previous_obs = Client().get_observation(
+                station_id,
+                previous_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+            )
 
-            return delta
+            # Function to calculate 'delta' for st.metric
+            def delta(x, y):
+                if x == y:
+                    delta = None
+                elif x and y is not None:
+                    delta = x - y
+                else:
+                    delta = None
 
-        with st.container(border=True):
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                d = delta(current_obs['t'], previous_obs['t'])
-                c = current_obs['t']
-                st.metric(
-                    label='Température',
-                    value=(f'{c} °C') if c is not None else None,
-                    delta=(f'{d:.1f} °C') if d is not None else None
-                )
-            with col2:
-                d = delta(current_obs['u'], previous_obs['u'])
-                c = current_obs['u']
-                st.metric(
-                    label='Humidité',
-                    value=(f'{c} %') if c is not None else None,
-                    delta=(f'{round(d)} %') if d is not None else None
-                )
-            with col3:
-                d = delta(current_obs['ff'], previous_obs['ff'])
-                c = current_obs['ff']
-                st.metric(
-                    label='Vent',
-                    value=(f'{c} km/h') if c is not None else None,
-                    delta=(f'{round(d)} km/h') if d is not None else None
-                )
-            with col4:
-                d = delta(current_obs['rr1'], previous_obs['rr1'])
-                c = current_obs['rr1']
-                st.metric(
-                    label='Précipitations 1h',
-                    value=(f'{c} mm') if c is not None else None,
-                    delta=(f'{round(d)} mm') if d is not None else None
-                )
+                return delta
 
-            # st.divider()
+            with st.container(border=True):
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    d = delta(current_obs['t'], previous_obs['t'])
+                    c = current_obs['t']
+                    st.metric(
+                        label='Température',
+                        value=(f'{c} °C') if c is not None else None,
+                        delta=(f'{d:.1f} °C') if d is not None else None
+                    )
+                with col2:
+                    d = delta(current_obs['u'], previous_obs['u'])
+                    c = current_obs['u']
+                    st.metric(
+                        label='Humidité',
+                        value=(f'{c} %') if c is not None else None,
+                        delta=(f'{round(d)} %') if d is not None else None
+                    )
+                with col3:
+                    d = delta(current_obs['ff'], previous_obs['ff'])
+                    c = current_obs['ff']
+                    st.metric(
+                        label='Vent',
+                        value=(f'{c} km/h') if c is not None else None,
+                        delta=(f'{round(d)} km/h') if d is not None else None
+                    )
+                with col4:
+                    d = delta(current_obs['rr1'], previous_obs['rr1'])
+                    c = current_obs['rr1']
+                    st.metric(
+                        label='Précipitations 1h',
+                        value=(f'{c} mm') if c is not None else None,
+                        delta=(f'{round(d)} mm') if d is not None else None
+                    )
 
-            col5, col6, col7, col8 = st.columns(4)
-            with col5:
-                d = delta(current_obs['vv'], previous_obs['vv'])
-                c = current_obs['vv']
-                st.metric(
-                    label='Visibilité',
-                    value=(f'{c} m') if c is not None else None,
-                    delta=(f'{round(d)} m') if d is not None else None
-                )
-            with col6:
-                d = delta(current_obs['sss'], previous_obs['sss'])
-                c = current_obs['sss']
-                st.metric(
-                    label='Neige',
-                    value=(f'{c} m') if c is not None else None,
-                    delta=(f'{round(d)} m') if d is not None else None
-                )
-            with col7:
-                d = delta(current_obs['insolh'], previous_obs['insolh'])
-                c = current_obs['insolh']
-                st.metric(
-                    label='Ensoleillement',
-                    value=(f'{c} min') if c is not None else None,
-                    delta=(f'{round(d)} min') if d is not None else None
-                )
-            with col8:
-                d = delta(current_obs['pres'], previous_obs['pres'])
-                c = current_obs['pres']
-                st.metric(
-                    label='Pression',
-                    value=(f'{c} hPa') if c is not None else None,
-                    delta=(f'{round(d)} hPa') if d is not None else None
-                )
+                # st.divider()
 
-            st.caption(f'Mise à jour : {current_obs['validity_time']}')                        
+                col5, col6, col7, col8 = st.columns(4)
+                with col5:
+                    d = delta(current_obs['vv'], previous_obs['vv'])
+                    c = current_obs['vv']
+                    st.metric(
+                        label='Visibilité',
+                        value=(f'{c} m') if c is not None else None,
+                        delta=(f'{round(d)} m') if d is not None else None
+                    )
+                with col6:
+                    d = delta(current_obs['sss'], previous_obs['sss'])
+                    c = current_obs['sss']
+                    st.metric(
+                        label='Neige',
+                        value=(f'{c} m') if c is not None else None,
+                        delta=(f'{round(d)} m') if d is not None else None
+                    )
+                with col7:
+                    d = delta(current_obs['insolh'], previous_obs['insolh'])
+                    c = current_obs['insolh']
+                    st.metric(
+                        label='Ensoleillement',
+                        value=(f'{c} min') if c is not None else None,
+                        delta=(f'{round(d)} min') if d is not None else None
+                    )
+                with col8:
+                    d = delta(current_obs['pres'], previous_obs['pres'])
+                    c = current_obs['pres']
+                    st.metric(
+                        label='Pression',
+                        value=(f'{c} hPa') if c is not None else None,
+                        delta=(f'{round(d)} hPa') if d is not None else None
+                    )
+
+                st.caption(f'Mise à jour : {current_obs['validity_time']}')
+
+        get_display_current_data(station_id)  
+
+        st.markdown('##### Date antérieure')
 
 else:
 
