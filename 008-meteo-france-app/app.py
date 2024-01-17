@@ -8,6 +8,7 @@ import streamlit as st
 # import requests
 from datetime import datetime, timedelta
 import pandas as pd
+from io import StringIO
 
 # ------- Import data ------
 
@@ -21,15 +22,22 @@ def clean_stations_df(df):
 
 clean_stations_df(df_stations)
 
+# ------- Initialize session_state ------
+
+keys = ['search_input', 'selected', 'id_station', 'current_time_utc']
+for key in keys:
+    if key not in st.session_state:
+        st.session_state[key] = ''
+
 # ------- Main code of app : page config ------
 
 st.set_page_config(
-    page_title='Météo France App',
-    page_icon='📡',
+    page_title='Météo App',
+    page_icon='⛅',
     initial_sidebar_state='expanded'
 )
 
-st.title('Météo France app')
+st.title('Météo app')
 
 # ------- Main code of app : sidebar ------
 
@@ -46,7 +54,7 @@ with st.sidebar:
 
     def reset_click():
         st.session_state['search_input'] = ''
-        st.session_state['selected'] = None
+        st.session_state['selected'] = ''
 
     st.button('Effacer', on_click=reset_click)
 
@@ -67,9 +75,7 @@ if st.session_state['selected']:
 
     with st.spinner('Chargement des données en cours...'):
     
-        st.markdown('### Station')
-
-        station = st.session_state['selected']
+        st.markdown('### 🗼 Station')
 
         # Wrap below section in function to cache data and prevent 'rerun' if
         # selected station doesn't change
@@ -104,24 +110,23 @@ if st.session_state['selected']:
                 '''
                 st.markdown(nearest_station_text)
 
-                station_id = nearest_stations_list[0]['id_station']
-
-            return station_id
+            # Save id of selected station in 'session_state'
+            st.session_state['id_station'] = nearest_stations_list[0]['id_station']
             
-        station_id = get_display_station_info(station)
+        get_display_station_info(st.session_state['selected'])
 
-        st.markdown('### Observations')
+        st.markdown('### 🔎 Observations')
 
-        st.markdown('##### Temps réel')
+        st.markdown('##### En temps réel')
 
         # Wrap below section in function to cache data and prevent 'rerun' if 
         # station_id doesn't change
         @st.cache_data
-        def get_display_current_data(station_id):
+        def get_display_current_data(id_station):
 
             # Get current weather informations from the nearest station
             current_obs = Client().get_observation(
-                station_id, '')
+                id_station, '')
             
             # Calculate utc time of the previous weather information
             previous_time = (
@@ -132,7 +137,7 @@ if st.session_state['selected']:
 
             # Get previous weather informations from the nearest station
             previous_obs = Client().get_observation(
-                station_id,
+                id_station,
                 previous_time.strftime('%Y-%m-%dT%H:%M:%SZ')
             )
 
@@ -220,9 +225,37 @@ if st.session_state['selected']:
 
                 st.caption(f'Mise à jour : {current_obs['validity_time']}')
 
-        get_display_current_data(station_id)  
+            # Save current UTC time in 'session_state'
+            st.session_state['current_time_utc'] = current_obs['validity_time_utc']
 
-        st.markdown('##### Date antérieure')
+        get_display_current_data(st.session_state['id_station'])
+
+        st.markdown('##### Le temps d\'avant')
+
+        n_year = st.number_input(
+            label='De combien d\'année(s) souhaitez-vous remonter en arrière ?',
+            min_value=1,
+            max_value=50,
+        )
+
+        # Calculate utc time of the past weather information
+        past_time = (
+            datetime.strptime(
+                st.session_state['current_time_utc'], '%Y-%m-%dT%H:%M:%SZ')
+        )
+        past_time = past_time.replace(year=past_time.year-n_year)
+
+        # Get previous weather informations from the nearest station
+        past_obs_order = Client().order_hourly_weather_info(
+            st.session_state['id_station'],
+            past_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            past_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        )
+        past_obs = Client().get_order_data(past_obs_order)
+
+        df_past_obs = pd.read_csv(StringIO(past_obs), sep=';')
+
+        st.write(df_past_obs)
 
 else:
 
