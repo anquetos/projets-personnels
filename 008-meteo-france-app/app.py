@@ -22,13 +22,6 @@ def clean_stations_df(df):
 
 clean_stations_df(df_stations)
 
-# ------- Initialize session_state ------
-
-keys = ['search_input', 'selected', 'id_station', 'current_time_utc']
-for key in keys:
-    if key not in st.session_state:
-        st.session_state[key] = ''
-
 # ------- Main code of app : page config ------
 
 st.set_page_config(
@@ -54,7 +47,7 @@ with st.sidebar:
 
     def reset_click():
         st.session_state['search_input'] = ''
-        st.session_state['selected'] = ''
+        st.session_state['selected'] = None
 
     st.button('Effacer', on_click=reset_click)
 
@@ -64,10 +57,10 @@ with st.sidebar:
         index=None,
         format_func=lambda x: f'{x['label']} ({x['context'].split(',')[0]})',
         key='selected',
-        placeholder='Sélectionnez un résultat...'
+        placeholder='Sélectionnez un résultat...',
         )
     
-    'st_session_state object :', st.session_state
+
 
 # ------- Main code of app : page ------
     
@@ -110,9 +103,9 @@ if st.session_state['selected']:
                 '''
                 st.markdown(nearest_station_text)
 
-            # Save id of selected station in 'session_state'
+            # Save station id in 'session_state'
             st.session_state['id_station'] = nearest_stations_list[0]['id_station']
-            
+
         get_display_station_info(st.session_state['selected'])
 
         st.markdown('### 🔎 Observations')
@@ -122,7 +115,7 @@ if st.session_state['selected']:
         # Wrap below section in function to cache data and prevent 'rerun' if 
         # station_id doesn't change
         @st.cache_data
-        def get_display_current_data(id_station):
+        def get_display_current_metrics(id_station):
 
             # Get current weather informations from the nearest station
             current_obs = Client().get_observation(
@@ -228,7 +221,7 @@ if st.session_state['selected']:
             # Save current UTC time in 'session_state'
             st.session_state['current_time_utc'] = current_obs['validity_time_utc']
 
-        get_display_current_data(st.session_state['id_station'])
+        get_display_current_metrics(st.session_state['id_station'])
 
         st.markdown('##### Le temps d\'avant')
 
@@ -276,3 +269,5 @@ else:
 
 # # call to render Folium map in Streamlit
 # st_data = st_folium(m, width=725)
+    
+'st_session_state object :', st.session_state
