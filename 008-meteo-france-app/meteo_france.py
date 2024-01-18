@@ -12,8 +12,6 @@
 #------------------------------------------------------------
 
 import requests
-from datetime import datetime
-import pytz
 
 # Unique application id : you can find this in the curl's command to generate
 # jwt token 
@@ -113,17 +111,6 @@ class Client(object):
 
         response = response.json()[0]
 
-        # Convert date and time information from UTC to local timezone
-        time_utc = datetime.strptime(
-            response['validity_time'], '%Y-%m-%dT%H:%M:%SZ')
-        # Set UTC timezone
-        utc_tz = pytz.timezone('UTC')
-        # Add timezone to UTC time
-        time_utc = utc_tz.localize(time_utc)
-        # Convert UTC time to local
-        local_tz = pytz.timezone('Europe/Paris')
-        time_local = time_utc.astimezone(local_tz).strftime('%Y-%m-%dT%H:%M:%SZ')
-
         # Convert temperature from Kelvin to Celsisus
         if response['t'] is not None:
             t = round(response['t'] - 273, 1)
@@ -136,6 +123,12 @@ class Client(object):
         else:
             ff = None
 
+        # Convert snwo from m to cm
+        if response['sss'] is not None:
+            sss = round(response['sss'] * 100)
+        else:
+            sss = None
+
         # Convert pressure from Pa to hPa
         if response['pres'] is not None:
             pres = round(response['pres'] / 100)
@@ -145,13 +138,13 @@ class Client(object):
         # Build data
         data = {
             'validity_time_utc': response['validity_time'],
-            'validity_time': time_local,
+            # 'validity_time': time_local,
             't': t,
             'u': response['u'],
             'ff': ff,
             'rr1': response['rr1'],
             'vv': response['vv'],
-            'sss': response['sss'],
+            'sss': sss,
             'insolh': response['insolh'],
             'pres': pres
         }

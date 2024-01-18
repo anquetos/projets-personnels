@@ -1,7 +1,8 @@
 # Import libraries
 import requests
-from geopy.distance import geodesic
 from geopy import distance
+from datetime import datetime
+import pytz
 
 
 # Functions used in the app
@@ -118,3 +119,39 @@ def reverse_geocoding(lat_lon):
         }
             
     return data
+
+
+def timezone_convert(input_dt: str, direction: str):
+    '''
+    Convert timezone of a date and time.
+
+    Parameters :
+    - input_dt : date to convert in ISO 8601 format with 
+    TZ UTC AAAA-MM-JJThh:00:00Z ;
+    - direction : define if conversion is UTC to local or local to UTC.
+
+    Returns converted date in ISO 8601 format with 
+    TZ UTC AAAA-MM-JJThh:00:00Z.
+    '''
+
+    # Set timezones
+    UTC_TZ = pytz.timezone('UTC')
+    LOCAL_TZ = pytz.timezone('Europe/Paris')
+
+    if direction == 'utc_to_local':
+        # Convert date and time information from UTC to local timezone
+        time_utc = datetime.strptime(input_dt, '%Y-%m-%dT%H:%M:%SZ')
+        # Add timezone to UTC time
+        time_utc = UTC_TZ.localize(time_utc)
+        time_local = time_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        return time_local
+
+    elif direction == 'local_to_utc':
+        # Convert date and time information from local to UTC timezone
+        time_local = datetime.strptime(input_dt, '%Y-%m-%dT%H:%M:%SZ')
+        # Add timezone to LOCAL time
+        time_local= LOCAL_TZ.localize(time_local)
+        time_utc = time_local.astimezone(UTC_TZ).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        return time_utc
