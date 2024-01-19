@@ -28,10 +28,10 @@ clean_stations_df(df_stations)
 def get_display_station_info(selected):
     '''
     Searches for the nearest observation station from the selected city then 
-    gets and display its information.
+    gets and display its information in 'st.expander()'
     Parameters :
     - selected : dictionnary with information on selected city.
-    Returns 'st.expander'
+    Returns the id of the station.
     '''
     # Get the list of nearest observation stations
     nearest_stations_list = find_nearest_stations(
@@ -60,9 +60,8 @@ def get_display_station_info(selected):
             * Date d'ouverture : {nearest_stations_list[0]['date_ouverture']}
         '''
         st.markdown(nearest_station_text)
-
-    # Save station id in 'session_state'
-    st.session_state['id_station'] = nearest_stations_list[0]['id_station']
+        
+    return nearest_stations_list[0]['id_station']
 
 
 @st.cache_data # prevent 'rerun' if selected station doesn't change
@@ -74,6 +73,7 @@ def get_current_data(id_station):
     - id_station : id of the station.
     Returns a dictionnary with the data
     '''
+
     # Get current weather informations from the nearest station
     current_obs = Client().get_observation(id_station, '')
 
@@ -93,11 +93,12 @@ def get_current_data(id_station):
     previous_obs['validity_time'] = timezone_convert(
         previous_obs['validity_time_utc'], 'utc_to_local')
 
-    st.session_state['current_data'] = {
+    data = {
         'current_obs': current_obs,
         'previous_obs': previous_obs
     }
 
+    return data
 
 
 @st.cache_data # prevent 'rerun' if selected station doesn't change  
@@ -112,8 +113,6 @@ def display_observation_metrics(data):
         '''
         Calculate 'delta' parameter for 'st.metrics'
         '''
-
-        # delta = x - y
         if x == y:
             delta = None
         elif x is None or y is None:
@@ -166,8 +165,8 @@ def display_observation_metrics(data):
             c = data['current_obs']['vv']
             st.metric(
                 label='Visibilité',
-                value=(f'{c} m') if c is not None else None,
-                delta=(f'{round(d)} m') if d is not None else None
+                value=(f'{c} km') if c is not None else None,
+                delta=(f'{d:.1f} km') if d is not None else None
             )
         with col6:
             d = delta(data['current_obs']['sss'], data['previous_obs']['sss'])
@@ -207,10 +206,12 @@ st.set_page_config(
 
 st.title('Météo app')
 
+st.session_state['id_station'] = ''
+
 # ------- Main code of app : sidebar ------
 
 with st.sidebar:
-
+    
     st.markdown('## Recherche')
 
     st.text_input(
@@ -226,8 +227,8 @@ with st.sidebar:
         index=None,
         format_func=lambda x: f'{x['label']} ({x['context'].split(',')[0]})',
         key='selected',
-        placeholder='Sélectionnez un résultat...',
-        )
+        placeholder='Sélectionnez un résultat...'
+    )
     
     def click_del():
         st.session_state['search_input'] = ''
@@ -238,16 +239,17 @@ with st.sidebar:
 # ------- Main code of app : page ------
     
 if st.session_state['selected']:
+
     with st.spinner('Chargement des données en cours...'):
 
         st.markdown('### 🗼 Station')
-        get_display_station_info(st.session_state['selected'])
+        id_station = get_display_station_info(st.session_state['selected'])
 
         st.markdown('### 🌡️ Observations')
 
         st.markdown('##### En temps réel')
-        get_current_data(st.session_state['id_station'])
-        display_observation_metrics(st.session_state['current_data'])
+        current_data = get_current_data(id_station)
+        display_observation_metrics(current_data)
 
         st.markdown('##### Le temps d\'avant')
 
@@ -259,30 +261,36 @@ if st.session_state['selected']:
 
         st.write('A quel moment souhaitez-vous remonter ?')
 
-        # col1, col2 = st.columns(2)
-        # with col1:
-        #     today = (datetime.strptime(
-        #         st.session_state['current_data']['current_obs']['validity_time'],
-        #         '%Y-%m-%dT%H:%M:%SZ'
-        #         )
-        #     )
+        st.write(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
+        st.write(timezone_convert(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"), 'local_to_utc'))
 
-        #     st.date_input(
-        #         label='1. Précisez une date',
-        #         value=(today-timedelta(days=2)),
-        #         max_value=(today-timedelta(days=2)),
-        #         key='tm_date'
-        #     )
+        col1, col2 = st.columns(2)
+        with col1:
+            # today = (datetime.strptime(
+            #     st.session_state['current_data']['current_obs']['validity_time'],
+            #     '%Y-%m-%dT%H:%M:%SZ'
+            #     )
+            # )
 
-        # with col2:
-        #     st.time_input(
-        #         label='2. Précisez une heure',
-        #         value=today,
-        #         step=3600,
-        #         key='tm_hour'
-        #     )
+            st.date_input('dff')
 
-        # st.button('Valider')
+            # st.date_input(
+            #     label='1. Précisez une date',
+            #     value=(today-timedelta(days=2)),
+            #     max_value=(today-timedelta(days=2)),
+            #     key='tm_date'
+            # )
+
+        with col2:
+            # st.time_input(
+            #     label='2. Précisez une heure',
+            #     value=today,
+            #     step=3600,
+            #     key='tm_hour'
+            # )
+            st.date_input('zzzz')
+
+        st.button('Valider')
 
         # # Combinaison des variables pour créer var3
         # past_start_datetime = (datetime.combine(st.session_state['tm_date'], st.session_state['tm_hour']) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -292,12 +300,7 @@ if st.session_state['selected']:
         # st.write(past_start_datetime)
         # st.write(past_end_datetime)
 
-        # n_year = st.number_input(
-        #     label='De combien d\'année(s) souhaitez-vous remonter en arrière ?',
-        #     min_value=1,
-        #     max_value=50,
-        # )
-
+    
         # # Calculate utc time of the past weather information
         # past_time = (
         #     datetime.strptime(
@@ -317,6 +320,7 @@ if st.session_state['selected']:
 
         # st.write(df_past_obs)
 
+
 else:
 
     st.info('''
@@ -327,6 +331,8 @@ else:
         Pour cela, utilisez la **zone de recherche** située dans le **menu 
         latéral** puis **faites votre choix** parmi les **résultats proposés**.
     ''')
+
+
 
 
 

@@ -109,45 +109,62 @@ class Client(object):
             params=payload
         )
 
-        response = response.json()[0]
+        if response.status_code == 200:
 
-        # Convert temperature from Kelvin to Celsisus
-        if response['t'] is not None:
-            t = round(response['t'] - 273, 1)
+            status_code = response.status_code
+
+            response = response.json()[0]
+
+            # Convert temperature from Kelvin to Celsisus
+            if response['t'] is not None:
+                t = round(response['t'] - 273, 1)
+            else:
+                t = None
+
+            # Convert mean wind speed from m/s to km/h
+            if response['ff'] is not None:
+                ff = round(response['ff'] * 3.6)
+            else:
+                ff = None
+
+            # Convert visibilité from m to km
+            if response['vv'] is not None:
+                vv = round(response['vv'] / 1000, 1)
+            else:
+                vv = None
+
+            # Convert snow from m to cm
+            if response['sss'] is not None:
+                sss = round(response['sss'] * 100)
+            else:
+                sss = None
+
+            # Convert pressure from Pa to hPa
+            if response['pres'] is not None:
+                pres = round(response['pres'] / 100)
+            else:
+                pres = None
+
+            # Build data
+            data = {
+                'status_code': status_code,
+                'validity_time_utc': response['validity_time'],
+                # 'validity_time': time_local,
+                't': t,
+                'u': response['u'],
+                'ff': ff,
+                'rr1': response['rr1'],
+                'vv': vv,
+                'sss': sss,
+                'insolh': response['insolh'],
+                'pres': pres
+            }
+        
         else:
-            t = None
-
-        # Convert mean wind speed from m/s to km/h
-        if response['ff'] is not None:
-            ff = round(response['ff'] * 3.6)
-        else:
-            ff = None
-
-        # Convert snwo from m to cm
-        if response['sss'] is not None:
-            sss = round(response['sss'] * 100)
-        else:
-            sss = None
-
-        # Convert pressure from Pa to hPa
-        if response['pres'] is not None:
-            pres = round(response['pres'] / 100)
-        else:
-            pres = None
-
-        # Build data
-        data = {
-            'validity_time_utc': response['validity_time'],
-            # 'validity_time': time_local,
-            't': t,
-            'u': response['u'],
-            'ff': ff,
-            'rr1': response['rr1'],
-            'vv': response['vv'],
-            'sss': sss,
-            'insolh': response['insolh'],
-            'pres': pres
-        }
+            data = {
+                'status_code': response.status_code,
+                'reason' : response.reason
+            }
 
         return data
     
