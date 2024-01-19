@@ -121,7 +121,7 @@ def reverse_geocoding(lat_lon):
     return data
 
 
-def timezone_convert(input_dt: str, direction: str):
+def datetime_tz_convert(input_dt: str, direction: str):
     '''
     Convert timezone of a date and time.
 

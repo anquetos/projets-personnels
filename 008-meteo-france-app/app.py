@@ -88,9 +88,9 @@ def get_current_data(id_station):
         id_station, previous_time.strftime('%Y-%m-%dT%H:%M:%SZ'))
     
     # Convert UTC time to local
-    current_obs['validity_time'] = timezone_convert(
+    current_obs['validity_time'] = datetime_tz_convert(
         current_obs['validity_time_utc'], 'utc_to_local')
-    previous_obs['validity_time'] = timezone_convert(
+    previous_obs['validity_time'] = datetime_tz_convert(
         previous_obs['validity_time_utc'], 'utc_to_local')
 
     data = {
@@ -261,36 +261,55 @@ if st.session_state['selected']:
 
         st.write('A quel moment souhaitez-vous remonter ?')
 
-        st.write(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
-        st.write(timezone_convert(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"), 'local_to_utc'))
+        
 
-        col1, col2 = st.columns(2)
+        if datetime.now().time() < time(11,45,0):
+            date_max_value = datetime.now() - timedelta(days=1)
+            date_value = date_max_value
+        else:
+            date_max_value = datetime.now()
+            date_value = date_max_value
+
+        time_value = (
+            datetime(2023, 1, 1, 6, 0, 0, tzinfo=pytz.utc)
+            .astimezone(pytz.timezone('Europe/Paris')).time()
+        )
+
+        col1, col2, col3 = st.columns(3)
         with col1:
-            # today = (datetime.strptime(
-            #     st.session_state['current_data']['current_obs']['validity_time'],
-            #     '%Y-%m-%dT%H:%M:%SZ'
-            #     )
-            # )
+            st.date_input(
+                label='1. Précisez une date',
+                value=date_max_value,
+                max_value=date_max_value,
+                key='tm_date'
+            )
 
-            st.date_input('dff')
-
-            # st.date_input(
-            #     label='1. Précisez une date',
-            #     value=(today-timedelta(days=2)),
-            #     max_value=(today-timedelta(days=2)),
-            #     key='tm_date'
-            # )
+        def test():
+            if st.session_state['tm_hour'] >  time_value:
+                valid_time = False
+            else:
+                valid_time=True
+            return valid_time
 
         with col2:
-            # st.time_input(
-            #     label='2. Précisez une heure',
-            #     value=today,
-            #     step=3600,
-            #     key='tm_hour'
-            # )
-            st.date_input('zzzz')
+            st.time_input(
+                label='2. Précisez une heure',
+                value=time_value,
+                step=3600,
+                key='tm_hour',
+                on_change=test
+            )
+        
+        if 'disabled' not in st.session_state:
+            st.session_state['disabled'] = False
+        placeholder = st.empty()
+        if test() == True:
+            placeholder.button('fdfd')
+        elif test() == False:
+            placeholder.warning('Blahblah')
 
-        st.button('Valider')
+        # st.write(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
+        # st.write(datetime_tz_convert(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"), 'local_to_utc'))
 
         # # Combinaison des variables pour créer var3
         # past_start_datetime = (datetime.combine(st.session_state['tm_date'], st.session_state['tm_hour']) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
