@@ -12,6 +12,8 @@
 #------------------------------------------------------------
 
 import requests
+import pandas as pd
+from io import StringIO
 
 # Unique application id : you can find this in the curl's command to generate
 # jwt token 
@@ -117,7 +119,7 @@ class Client(object):
 
             # Convert temperature from Kelvin to Celsisus
             if response['t'] is not None:
-                t = round(response['t'] - 273, 1)
+                t = round((response['t']-273), 1)
             else:
                 t = None
 
@@ -129,7 +131,7 @@ class Client(object):
 
             # Convert visibilité from m to km
             if response['vv'] is not None:
-                vv = round(response['vv'] / 1000, 1)
+                vv = round((response['vv']/1000), 1)
             else:
                 vv = None
 
@@ -141,7 +143,7 @@ class Client(object):
 
             # Convert pressure from Pa to hPa
             if response['pres'] is not None:
-                pres = round(response['pres'] / 100)
+                pres = round((response['pres']/100), 1)
             else:
                 pres = None
 
@@ -238,6 +240,7 @@ class Client(object):
         )
 
         return response.text
+
 
 def main():
     client=Client()

@@ -8,6 +8,7 @@ import streamlit as st
 # import requests
 from datetime import datetime, timedelta, date, time
 import pandas as pd
+import numpy as np
 from io import StringIO
 
 # ------- Import data ------
@@ -129,7 +130,7 @@ def display_observation_metrics(data):
             c = data['current_obs']['t']
             st.metric(
                 label='Température',
-                value=(f'{c} °C') if c is not None else None,
+                value=(f'{c:.1f} °C') if c is not None else None,
                 delta=(f'{d:.1f} °C') if d is not None else None
             )
         with col2:
@@ -138,23 +139,23 @@ def display_observation_metrics(data):
             st.metric(
                 label='Humidité',
                 value=(f'{c} %') if c is not None else None,
-                delta=(f'{round(d)} %') if d is not None else None
+                delta=(f'{d:.0f} %') if d is not None else None
             )
         with col3:
             d = delta(data['current_obs']['ff'], data['previous_obs']['ff'])
             c = data['current_obs']['ff']
             st.metric(
                 label='Vent',
-                value=(f'{c} km/h') if c is not None else None,
-                delta=(f'{round(d)} km/h') if d is not None else None
+                value=(f'{c:.0f} km/h') if c is not None else None,
+                delta=(f'{d:.0f} km/h') if d is not None else None
             )
         with col4:
             d = delta(data['current_obs']['rr1'], data['previous_obs']['rr1'])
             c = data['current_obs']['rr1']
             st.metric(
                 label='Précipitations 1h',
-                value=(f'{c} mm') if c is not None else None,
-                delta=(f'{round(d)} mm') if d is not None else None
+                value=(f'{c:.1f} mm') if c is not None else None,
+                delta=(f'{d:.1f} mm') if d is not None else None
             )
 
         # st.divider()
@@ -165,7 +166,7 @@ def display_observation_metrics(data):
             c = data['current_obs']['vv']
             st.metric(
                 label='Visibilité',
-                value=(f'{c} km') if c is not None else None,
+                value=(f'{c:.1f} km') if c is not None else None,
                 delta=(f'{d:.1f} km') if d is not None else None
             )
         with col6:
@@ -173,27 +174,104 @@ def display_observation_metrics(data):
             c = data['current_obs']['sss']
             st.metric(
                 label='Neige',
-                value=(f'{c} cm') if c is not None else None,
-                delta=(f'{round(d)} cm') if d is not None else None
+                value=(f'{c:.0f} cm') if c is not None else None,
+                delta=(f'{d:.0f} cm') if d is not None else None
             )
         with col7:
             d = delta(data['current_obs']['insolh'], data['previous_obs']['insolh'])
             c = data['current_obs']['insolh']
             st.metric(
                 label='Ensoleillement',
-                value=(f'{c} min') if c is not None else None,
-                delta=(f'{round(d)} min') if d is not None else None
+                value=(f'{c:.0f} min') if c is not None else None,
+                delta=(f'{d:.0f} min') if d is not None else None
             )
         with col8:
             d = delta(data['current_obs']['pres'], data['previous_obs']['pres'])
             c = data['current_obs']['pres']
             st.metric(
                 label='Pression',
-                value=(f'{c} hPa') if c is not None else None,
-                delta=(f'{round(d)} hPa') if d is not None else None
+                value=(f'{c:.0f} hPa') if c is not None else None,
+                delta=(f'{d:.0f} hPa') if d is not None else None
             )
+        
+        if 'validity_time' in data['current_obs']:
+            st.caption(f'📅 {data['current_obs']['validity_time']}')
 
-        st.caption(f'📅 {data['current_obs']['validity_time']}')
+def tm_input_parameters():
+    '''
+    Calculate parameters for 'st.input_date' and 'st.input_time' for the
+    Time Machine section.
+    Returns a tuple with the parameters.
+    '''
+    if datetime.now().time() < time(11,45,0):
+        tm_max_date_value = datetime.now().date() - timedelta(days=1)
+        tm_date_value = tm_max_date_value
+    else:
+        tm_max_date_value = datetime.now().date()
+        tm_date_value = tm_max_date_value
+
+    tm_time_limit = (
+        datetime(2023, 1, 1, 5, 0, 0, tzinfo=pytz.utc)
+        .astimezone(pytz.timezone('Europe/Paris')).time()
+    )
+
+    return tm_date_value, tm_max_date_value, tm_time_limit
+
+@st.cache_data # prevent 'rerun'
+def clean_data_for_metrics(raw_data):
+    '''
+    Clean archived data recovered from hourly or daily climatology API.
+    Parameters:
+    - raw_data : csv response from the API.
+    Returns data in dictionnary compatible with 'display_observation_metrics' 
+    function.
+    '''
+    # Import data in DataFrame
+    df = pd.read_csv(StringIO(raw_data), sep=';')
+
+    # Convert 'object' data to 'float'
+    string_col = df.select_dtypes(include=['object']).columns
+    for col in string_col:
+        df[col] = df[col].str.replace(',', '.')
+        df[col] = df[col].astype('float')
+
+    # Replace Pandas 'NaN' with 'None'
+    df = df.replace(np.nan, None)
+
+    # Rename columns
+    df = df.rename(
+        columns={ 'NEIGETOT': 'sss', 'INS': 'insolh', 'PSTAT': 'pres'})
+
+    # Lower columns names
+    df.columns = df.columns.str.lower()
+
+    # Set index with 'previous' and 'current' indication
+    df['obs'] = ['previous_obs', 'current_obs']
+    df = df.set_index('obs')
+
+    # Convert units
+    try:
+        df['ff'] = round(df['ff'] * 3.6)
+    except TypeError:
+        pass
+    try:
+        df['vv'] = round((df['vv']/1000), 1)
+    except TypeError:
+        pass
+    try:
+        df['sss'] = round(df['sss'] * 100)
+    except TypeError:
+        pass
+    try:
+        df['pres'] = round(df['pres'])
+    except TypeError:
+        pass
+
+    # Convert DataFrame to dictionnary
+    data = df.to_dict('index')
+
+    return data
+
 
 
 # ------- Main code of app : page config ------
@@ -236,6 +314,7 @@ with st.sidebar:
 
     st.button('Effacer', on_click=click_del)
 
+
 # ------- Main code of app : page ------
     
 if st.session_state['selected']:
@@ -258,87 +337,54 @@ if st.session_state['selected']:
             Vous pouvez **remonter le temps** et afficher les relevés de la 
             station d'observation **à une date antérieure**.
         ''')
+       
+       # Get parameters of date and time input
+        tm_date_value, tm_max_date_value, tm_time_limit = tm_input_parameters()
 
-        st.write('A quel moment souhaitez-vous remonter ?')
-
-        
-
-        if datetime.now().time() < time(11,45,0):
-            date_max_value = datetime.now() - timedelta(days=1)
-            date_value = date_max_value
-        else:
-            date_max_value = datetime.now()
-            date_value = date_max_value
-
-        time_value = (
-            datetime(2023, 1, 1, 6, 0, 0, tzinfo=pytz.utc)
-            .astimezone(pytz.timezone('Europe/Paris')).time()
+        tm_selected_date = st.date_input(
+            label='1. Précisez une date',
+            value=tm_date_value,
+            max_value=tm_max_date_value
         )
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.date_input(
-                label='1. Précisez une date',
-                value=date_max_value,
-                max_value=date_max_value,
-                key='tm_date'
-            )
-
-        def test():
-            if st.session_state['tm_hour'] >  time_value:
-                valid_time = False
-            else:
-                valid_time=True
-            return valid_time
-
-        with col2:
-            st.time_input(
-                label='2. Précisez une heure',
-                value=time_value,
-                step=3600,
-                key='tm_hour',
-                on_change=test
-            )
+      
+        tm_selected_time = st.time_input(
+            label='2. Précisez une heure',
+            value=tm_time_limit,
+            step=3600,
+            label_visibility='visible'
+        )
         
-        if 'disabled' not in st.session_state:
-            st.session_state['disabled'] = False
-        placeholder = st.empty()
-        if test() == True:
-            placeholder.button('fdfd')
-        elif test() == False:
-            placeholder.warning('Blahblah')
-
-        # st.write(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"))
-        # st.write(datetime_tz_convert(datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ"), 'local_to_utc'))
-
-        # # Combinaison des variables pour créer var3
-        # past_start_datetime = (datetime.combine(st.session_state['tm_date'], st.session_state['tm_hour']) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        # past_end_datetime = (datetime.combine(st.session_state['tm_date'], st.session_state['tm_hour'])).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Verify is selected date and time respects Météo France API rules
+        def check_datetime_limit():
+            return ((tm_selected_date == tm_max_date_value)
+                    and (tm_selected_time > tm_time_limit))
         
+        if check_datetime_limit():
+            st.warning(f'L\'heure sélectionnée est trop récente : elle ne peut '
+                       f'pas dépasser {tm_time_limit:%Hh%M}.')
+        else:
+            tm_validate = st.button('Valider')
 
-        # st.write(past_start_datetime)
-        # st.write(past_end_datetime)
+        if tm_validate:
+            with st.spinner('Chargement des données en cours...'):
+                tm_start_datetime = (
+                    datetime.combine(tm_selected_date, tm_selected_time)
+                    - timedelta(hours=1)
+                ).strftime('%Y-%m-%dT%H:%M:%SZ')
+                
+                tm_end_datetime = (
+                    datetime.combine(tm_selected_date, tm_selected_time)
+                ).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    
-        # # Calculate utc time of the past weather information
-        # past_time = (
-        #     datetime.strptime(
-        #         st.session_state['current_time_utc'], '%Y-%m-%dT%H:%M:%SZ')
-        # )
-        # past_time = past_time.replace(year=past_time.year-n_year)
+                tm_order = Client().order_hourly_weather_info(
+                    id_station,
+                    datetime_tz_convert(tm_start_datetime, 'local_to_utc'),
+                    datetime_tz_convert(tm_end_datetime, 'local_to_utc')
+                )
 
-        # Get previous weather informations from the nearest station
-        # past_obs_order = Client().order_hourly_weather_info(
-        #     st.session_state['id_station'],
-        #     past_start_datetime,
-        #     past_end_datetime
-        # )
-        # past_obs = Client().get_order_data(past_obs_order)
-
-        # df_past_obs = pd.read_csv(StringIO(past_obs), sep=';')
-
-        # st.write(df_past_obs)
-
+                tm_raw_data = Client().get_order_data(tm_order)
+                tm_data = clean_data_for_metrics(tm_raw_data)
+                display_observation_metrics(tm_data)
 
 else:
 
@@ -352,9 +398,6 @@ else:
     ''')
 
 
-
-
-
 # ------- WIP ------
         
 # m = folium.Map(location=[46.71109, 1.7191036], zoom_start=6)
@@ -362,4 +405,4 @@ else:
 # # call to render Folium map in Streamlit
 # st_data = st_folium(m, width=725)
     
-'st_session_state object :', st.session_state
+# 'st_session_state object :', st.session_state
