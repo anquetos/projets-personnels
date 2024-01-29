@@ -42,23 +42,7 @@ def import_api_daily_parameters():
 
     return df
 
-df_viz_variables = import_api_daily_parameters()
-
-# Create a dictionnay of variables available for plotting
-# viz_options_dict = {
-#     't': {'label': 'Température', 'variables': ['tm', 'tmnx', 'tn', 'tx'],
-#           'unit': '°C', 'graph_type': 'line'},
-#     'u': {'label': 'Humidité', 'variables': ['um', 'un', 'ux'], 'unit': '%',
-#           'graph_type': 'line'},
-#     'ff': {'label': 'Vent', 'variables': ['ffm', 'fxi', 'fxy'], 'unit': 'km/h',
-#            'graph_type': 'line'},
-#     'rr': {'label': 'Précipitations', 'variables': ['rr'], 'unit': 'mm',
-#            'graph_type': 'bar'},
-#     'sss': {'label': 'Neige', 'variables': ['neigetotx'], 'unit': 'cm',
-#                 'graph_type': 'bar'},
-#     'inst': {'label': 'Ensoleillement', 'variables': ['inst'], 'unit': 'min',
-#              'graph_type': 'bar'}
-# }
+api_daily_parameters = import_api_daily_parameters()
 
 # ------- Function for sidebar ------
 
@@ -93,7 +77,7 @@ def get_display_station_info(selected):
         nearest_station_text = f'''
             * id : {nearest_stations_list[0]['id_station']}
             * Altitude : {nearest_stations_list[0]['altitude']} m
-            * Distance de {st.session_state['selected']['label']} : 
+            * Distance de {st.session_state['selected_city']['label']} : 
             {nearest_stations_list[0]['distance']:.1f} km
             * Date d'ouverture : {nearest_stations_list[0]['date_ouverture']}
         '''
@@ -308,31 +292,11 @@ def display_observation_metrics(data):
 
 # ------- Functions for visualisation section in main page ------
 
-# @st.cache_data # prevent 'rerun' if 'raw_data' don't change
-# def clean_data_for_viz(raw_data):
-#     '''
-#     Clean archived data recovered from daily climatology API.
-#     Parameter :
-#     - raw_data : csv response from the API.
-#     Returns data in a DataFrame ready for plotting.
-#     '''
-#     # Import data in DataFrame
-#     df = pd.read_csv(StringIO(raw_data), sep=';', parse_dates=['DATE'])
-
-#     # Convert 'object' data to 'float'
-#     string_col = df.select_dtypes(include=['object']).columns
-#     for col in string_col:
-#         df[col] = df[col].str.replace(',', '.')
-#         df[col] = df[col].astype('float')
-#     # Lower columns names
-#     df.columns = df.columns.str.lower()
-
-#     return df
-
 @st.cache_data
-def get_clean_data_for_viz(year):
+def get_clean_data_for_viz(id_station, year):
     '''
     Parameter :
+    - - id_station : id of the station ;
     - year : the year for which to get data.
     Returns data in a DataFrame ready for plotting.
     '''
@@ -373,8 +337,6 @@ def get_clean_data_for_viz(year):
 
 st.title('Météo app')
 
-# st.session_state['id_station'] = ''
-
 # ------- Main code of app : sidebar ------
 
 with st.sidebar:
@@ -393,24 +355,25 @@ with st.sidebar:
         options=search_municipality(st.session_state['search_input']),
         index=None,
         format_func=lambda x: f'{x['label']} ({x['context'].split(',')[0]})',
-        key='selected',
+        key='selected_city',
         placeholder='Sélectionnez un résultat...'
     )
     
     def click_del():
         st.session_state['search_input'] = ''
-        st.session_state['selected'] = None
+        st.session_state['selected_city'] = None
 
     st.button('Effacer', on_click=click_del)
     
-    if st.session_state['selected']:
+    if st.session_state['selected_city']:
         st.markdown('## 🗼 Station météo')
-        id_station, station_open_date = get_display_station_info(st.session_state['selected'])
+        id_station, station_open_date = get_display_station_info(
+            st.session_state['selected_city'])
 
 
 # ------- Main code of app : page ------
     
-if st.session_state['selected']:
+if st.session_state['selected_city']:
 
     st.markdown('#### 🌡️ Observations en temps réel')
 
@@ -478,7 +441,14 @@ if st.session_state['selected']:
                 st.warning(f'L\'heure sélectionnée est trop récente : elle ne peut '
                        f'pas dépasser {tm_time_limit:%Hh%M}.')
 
-    st.markdown('#### 📈 Historique des observations')
+    st.markdown('#### 📈 Historique et statistiques des observations')
+
+    # Store the initial values for widgets in session state 
+    if 'viz_data' not in st.session_state:
+        st.session_state['viz_data'] = pd.DataFrame()
+
+    if 'viz_selected_option' not in st.session_state:
+            st.session_state['viz_selected_option'] = None
 
     # Create a descending list of years from the station opening until now
     viz_years_list = list(
@@ -487,96 +457,101 @@ if st.session_state['selected']:
     with st.container(border=True):
         st.write('''Visualisez **l'évolution** des **variables** pour 
                  **l'année** de votre choix.''')
-        col3, col4 = st.columns(2)
-        with col3: 
-            viz_selected_year = st.selectbox(
-                label='Sélectionnez une année', options=viz_years_list, index=1)
-            year_validate = st.button('Valider', key='year_validate')
         
-        if year_validate:
-            # Get data for selected year
-            st.session_state['viz_data'] = get_clean_data_for_viz(viz_selected_year)
+        def clear_viz_data():
+            st.session_state['viz_data'] = pd.DataFrame()
 
-            # Create a dictionnary of avaible variables to visualize for the
-            # selected station and year
-            viz_options = dict()
-            for column in st.session_state['viz_data'].columns[2:]:
-                option = (
-                    df_viz_variables
-                    .loc[
-                        (~df_viz_variables['viz_option'].isna())
-                        & (df_viz_variables['variable'] == column),
-                        'viz_option'
-                    ]
-                    .values
-                )
-                if len(option) > 0:
-                    viz_options[column] = option[0]
-
-            st.session_state['viz_options'] = viz_options
-            
-        with col4:
-            # st.session_state['viz_options']=''
-        # Create and populate a selectbox
-            viz_selected_variable = st.selectbox(
-                label='Sélectionnez une variable à afficher',
-                options=set(st.session_state['viz_options'].values())
-            )
-
-            option_validate = st.button('Afficher', key='option_validate')
-
-    if option_validate:
-        variables_to_plot = {
-            k for k, v in st.session_state['viz_options'].items()
-            if v == viz_selected_variable
-        }
-
-        fig = px.line(
-            st.session_state['viz_data'],
-            x='date',
-            y=list(variables_to_plot),
-            title=viz_selected_variable,
-            labels={
-                'date': 'Date',
-                'value': 'Valeur',
-                'variable': 'Variables'
-            }
+        viz_selected_year = st.selectbox(
+                label='Sélectionnez une année',
+                options=viz_years_list,
+                index=1,
+                on_change=clear_viz_data
         )
-        fig.update_layout(legend=dict(x=0, y=1.15, orientation='h'))
 
-        # Récupère la liste des noms de la légende
-        legend_names = [trace.name for trace in fig.data]
+        if st.button('Valider'):
+            st.session_state['viz_data'] = get_clean_data_for_viz(
+                id_station, viz_selected_year)
 
-        # Ajoute l'unité à chaque nom de la légende
-        for name in legend_names:
-            unit = df_viz_variables.loc[
-                df_viz_variables['variable'] == name, 'unit'].values[0]
-            fig.update_traces(name=f'{name} ({unit})', selector=dict(name=name))
+        radio_options = ['Température', 'Humidité', 'Vent', 'Précipitations',
+                            'Ensoleillement', 'Neige']
 
-        st.plotly_chart(fig)
-
-        # Stats WIP
-        st.write(st.session_state['viz_data'][list(variables_to_plot)].describe().loc[['min', 'max', 'mean', '50%', 'std']])
-
-        # Histogramme WIP
-
-        # Initialise un histogramme combiné
-        fig = go.Figure()
-        # Ajoute chaque variable au graphique
-        for variable in variables_to_plot:
-            fig.add_trace(go.Histogram(x=st.session_state['viz_data'][variable], nbinsx=10, name=variable, opacity=0.8))
-        # Met en forme le graphique
-        fig.update_layout(
-            title='Distribution',
-            barmode='overlay',
-            xaxis=dict(title='Valeurs'),
-            yaxis=dict(title='Fréquence')
+        st.radio(
+        label='Sélectionnez une variable à afficher',
+        options=radio_options,
+        index=0,
+        horizontal=True,
+        key='viz_selected_option'
         )
-        st.plotly_chart(fig)
 
-        # Boxplot WIP
-        fig = px.box(st.session_state['viz_data'][list(variables_to_plot)], points='all', title='Boxplot')
-        st.plotly_chart(fig)
+    variables_to_plot = api_daily_parameters.loc[
+        api_daily_parameters['viz_option'] 
+        == st.session_state['viz_selected_option'],
+        'variable'
+    ].tolist()
+
+    if st.session_state['viz_data'].columns.isin(variables_to_plot).any():
+        st.write(st.session_state['viz_data'][variables_to_plot].describe().loc[['min', 'max', 'mean', '50%', 'std']])
+    
+
+    fig1 = go.Figure()
+    for variable in variables_to_plot:
+        if variable in st.session_state['viz_data'].columns and st.session_state['viz_data'][variable].sum() > 0:
+            if api_daily_parameters.loc[api_daily_parameters['variable'] == variable, 'viz_graph_type'].item() == 'line':
+ 
+                fig1.add_trace(go.Scatter(
+                
+                x=st.session_state['viz_data']['date'],
+                y=st.session_state['viz_data'][variable],
+                # title=viz_selected_variable,
+                # labels={
+                #     'date': 'Date',
+                #     'value': 'Valeur',
+                #     'variable': 'Variables'
+                # }
+            ))
+                
+            elif api_daily_parameters.loc[api_daily_parameters['variable'] == variable, 'viz_graph_type'].item() == 'bar':
+ 
+                fig1.add_trace(go.Bar(
+                
+                x=st.session_state['viz_data']['date'],
+                y=st.session_state['viz_data'][variable],
+                # title=viz_selected_variable,
+                # labels={
+                #     'date': 'Date',
+                #     'value': 'Valeur',
+                #     'variable': 'Variables'
+                # }
+            ))
+    fig1.update_layout(legend=dict(x=0, y=1.15, orientation='h'))
+
+
+    # Histogramme WIP
+
+    # Initialise un histogramme combiné
+    fig2 = go.Figure()
+    # Ajoute chaque variable au graphique
+    for variable in variables_to_plot:
+        fig2.add_trace(go.Histogram(x=st.session_state['viz_data'][variable], nbinsx=10, name=variable, opacity=0.8))
+    # Met en forme le graphique
+    fig2.update_layout(
+        title='Distribution',
+        barmode='overlay',
+        xaxis=dict(title='Valeurs'),
+        yaxis=dict(title='Fréquence')
+    )
+    
+    # Boxplot WIP
+    fig3 = px.box(st.session_state['viz_data'][list(variables_to_plot)], points='all', title='Boxplot')
+    
+
+    if len(fig1.data) > 0:
+        st.plotly_chart(fig1)
+        st.plotly_chart(fig2)
+        st.plotly_chart(fig3)
+    else:
+        st.info('Rien à tracer')
+
                         
 else:
     st.info('''
