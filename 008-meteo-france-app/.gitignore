@@ -1,2 +1,2 @@
-bck.py
-test.ipynb
+env/
+.streamlit/secrets.toml

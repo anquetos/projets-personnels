@@ -1,252 +1,383 @@
-# ------- Import modules and librairies --------
-
-from utils import * # functions from 'utils.py'
-from meteo_france import Client # functions from 'meteo_france.py'
-# import folium
-import streamlit as st
-# from streamlit_folium import st_folium
-# import requests
+from io import StringIO
 from datetime import datetime, timedelta, date, time
+from zoneinfo import ZoneInfo
+
+import streamlit as st
+import requests
 import pandas as pd
 import numpy as np
-from io import StringIO
 import plotly.express as px
-import plotly.graph_objects as go
 
-# ------- Main code of app : page config ------
+import utils
+from meteo_france import Client
 
-st.set_page_config(page_title='Météo App', page_icon='🌤️',
-                   initial_sidebar_state='expanded')
-
-# ------- Data and variables------
-
-# Import and clean weather stations from csv
-@st.cache_data
-def import_stations():
-    df = pd.read_csv('./datasets/weather-stations-list.csv', sep=';',
-                      dtype={'Id_station': object}, parse_dates=['Date_ouverture'])
-
-    df.columns = df.columns.str.lower()
-    df['nom_usuel'] = df['nom_usuel'].str.title()
-
-    return df
-
-df_stations = import_stations()
+# -- Application functions
 
 @st.cache_data
-def import_api_daily_parameters():
+def import_api_daily_parameters() -> pd.DataFrame:
+    """Import climatological api parameters in a DataFrame"""
     df = pd.read_csv('./datasets/api-clim-table-parametres-quotidiens.csv',
                      sep=';')
-    df['variable'] = df['variable'].str.lower()
-    df['label'] = df['label'].str.capitalize()
 
     return df
 
-api_daily_parameters = import_api_daily_parameters()
 
-# ------- Function for sidebar ------
+@st.cache_data
+def get_station_info(coordinates: list[float]) -> dict:
+    """Call function with cache decorator to retrieve nearest observation
+    station information.
 
-@st.cache_data # prevent 'rerun' if selected station doesn't change
-def get_display_station_info(selected):
-    '''
-    Searches for the nearest observation station from the selected city then 
-    gets and display its information in 'st.expander()'
-    Parameters :
-    - selected : dictionnary with information on selected city.
-    Returns the id of the station and the opening date.
-    '''
-    # Get the list of nearest observation stations
-    nearest_stations_list = find_nearest_stations(
-        df_stations, selected['coordinates'])
+    Args:
+        coordinates (list[float]): nearest station latitude and longitude.
+
+    Returns:
+        dict: station information
+    """
+
+    return utils.filter_nearest_station_information(coordinates)
+
+
+@st.cache_data(ttl=timedelta(minutes=20))
+def get_observation(id_station: str) -> tuple[dict]:
+    """Call function with cache decorator to get current hourly observation and
+    the one an hour before.
+
+    Args:
+        id_station (str): id of nearest observation station.
+
+    Returns:
+        tuple[dict]: observations.
+    """
     
-    # Get the 'city' and 'context' of the nearest station
-    nearest_station_address = reverse_geocoding(
-        [
-            nearest_stations_list[0]['latitude'],
-            nearest_stations_list[0]['longitude']
-        ]
-    )
+    # Get current available observation
+    current_response = Client().get_hourly_observation(
+        id_station, '')
+    if current_response.status_code == requests.codes.ok:
+        current_obs = current_response.json()[0]
 
-    # Build and display information text about the nearest station
-    with st.expander(
-        f'{nearest_stations_list[0]['nom_usuel']}'
-        f'({nearest_station_address['city']}, '
-        f'{nearest_station_address['context']})'
-    ):
-
-        nearest_station_text = f'''
-            * id : {nearest_stations_list[0]['id_station']}
-            * Altitude : {nearest_stations_list[0]['altitude']} m
-            * Distance de {st.session_state['selected_city']['label']} : 
-            {nearest_stations_list[0]['distance']:.1f} km
-            * Date d'ouverture : {nearest_stations_list[0]['date_ouverture']}
-        '''
-        st.markdown(nearest_station_text)
-        
-    return (nearest_stations_list[0]['id_station'],
-            nearest_stations_list[0]['date_ouverture'])
-
-# ------- Function for 'current observation' section in main page ------
-
-@st.cache_data # prevent 'rerun' if selected station doesn't change
-def get_current_data(id_station):
-    '''
-    Get observation data of a specific station id for the current hour and the
-    hour before.
-    Parameters :
-    - id_station : id of the station.
-    Returns a dictionnary with the data
-    '''
-    # Get current weather informations from the nearest station
-    current_obs = Client().get_observation(id_station, '')
-
-    # Calculate UTC time of the previous weather information
-    previous_time = (
-        datetime.strptime(current_obs['validity_time_utc'], '%Y-%m-%dT%H:%M:%SZ')
+    # Calculate the previous validity time
+    previous_validity_time = (
+        datetime.strptime(current_obs.get('validity_time'), '%Y-%m-%dT%H:%M:%SZ')
         - timedelta(hours=1)
-    )
-
-    # Get previous weather informations from the nearest station
-    previous_obs = Client().get_observation(
-        id_station, previous_time.strftime('%Y-%m-%dT%H:%M:%SZ'))
+    ).strftime('%Y-%m-%dT%H:%M:%SZ')
+    # Get the previous observation before the last one available
+    previous_response = Client().get_hourly_observation(
+        id_station, previous_validity_time)
     
-    # Convert UTC time to local
-    current_obs['validity_time'] = datetime_tz_convert(
-        current_obs['validity_time_utc'], 'utc_to_local')
-    previous_obs['validity_time'] = datetime_tz_convert(
-        previous_obs['validity_time_utc'], 'utc_to_local')
+    if previous_response.status_code == requests.codes.ok:
+        previous_obs = previous_response.json()[0]
 
-    data = {
-        'current_obs': current_obs,
-        'previous_obs': previous_obs
-    }
+    return current_obs, previous_obs
 
-    return data
+    
+@st.cache_data
+def get_other_date_observation(id_station: str, date: date, time: time) -> dict:
+    """"Call function with cache decorator to get hourly observation and
+    the one an hour before at another date and time than the current one.
 
-# ------- Functions for 'past observation' section in main page ------
+    Args:
+        id_station (str): id of nearest observation station ;
+        date (date): date of requested data ;
+        time (time): time of requested data.
 
-def tm_input_parameters():
-    '''
-    Calculate parameters for 'st.input_date' and 'st.input_time' for the
-    Time Machine section.
-    Returns a tuple with the parameters.
-    '''
-    if datetime.now().astimezone(pytz.utc).time() < time(11,45,0):
-        tm_max_date_value = datetime.now().date() - timedelta(days=1)
-        tm_date_value = tm_max_date_value
+    Returns:
+        dict: observations.
+    """
+
+    # Set datetimes for the api requests
+    other_datetime_end = datetime.combine(
+        date, time, tzinfo=ZoneInfo('Europe/Paris'))
+    other_datetime_end_utc = other_datetime_end.astimezone(tz=ZoneInfo('UTC'))
+    other_datetime_start_utc = other_datetime_end_utc - timedelta(hours=1)
+
+    # Get order id from the api
+    other_date_order_response = Client().order_hourly_climatological_data(
+        id_station,
+        other_datetime_start_utc.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        other_datetime_end_utc.strftime('%Y-%m-%dT%H:%M:%SZ')
+    )
+    if other_date_order_response.status_code == 202:
+        other_date_order_id = (
+            other_date_order_response
+            .json() 
+            .get('elaboreProduitAvecDemandeResponse')
+            .get('return')
+        )
+
+    # Get data from order id
+    other_date_climatological_response = Client().order_recovery(
+            other_date_order_id)
+    if other_date_climatological_response.status_code == 201:
+        other_date_climatological_data = other_date_climatological_response.text
+        # Import data in a DataFrame
+        df = pd.read_csv(
+            StringIO(other_date_climatological_data), sep=';')
+        # Convert 'object' data to 'float'
+        string_col = df.select_dtypes(include=['object']).columns
+        for col in string_col:
+            df[col] = df[col].str.replace(',', '.')
+            df[col] = df[col].astype('float')
+        # Replace Pandas 'NaN' with 'None'
+        df = df.replace(np.nan, None)
+        # Set index with 'previous' and 'current' label
+        df['OBS'] = ['previous_obs', 'current_obs']
+        df = df.set_index('OBS')
+        
+    return df.to_dict('index')
+
+       
+@st.cache_data
+def get_year_climatological_data(id_station: str, year: int) -> pd.DataFrame:
+    """Call function with cache decorator to get climatological data for a full
+    year.
+
+    Args:
+        id_station (str): id of nearest observation station ;
+        year (int): year of requested data.
+
+    Returns:
+        pd.DataFrame: climatological data.
+    """
+    if year == st.session_state.nearest_station_info.get('date_ouverture').year:
+        start_date = f'{st.session_state.nearest_station_info.get('date_ouverture')}T00:00:00Z'
     else:
-        tm_max_date_value = datetime.now().date()
-        tm_date_value = tm_max_date_value
+        start_date = f'{year}-01-01T00:00:00Z'
+    # Define the end datetime (if selected year is the current year we probably
+    # can't end the period at end of December)
+    if year == datetime.now().year:
+        end_date = (datetime.now()-timedelta(days=2)).strftime('%Y-%m-%dT00:00:00Z')
+    else:
+        end_date = f'{year}-12-31T00:00:00Z'
 
-    tm_time_limit = (
-        datetime(2023, 1, 1, 5, 0, 0, tzinfo=pytz.utc)
-        .astimezone(pytz.timezone('Europe/Paris')).time()
+        # Get data from the api
+    visualization_order_response = Client().order_daily_climatological_data(
+        id_station, start_date, end_date)
+
+    if visualization_order_response.status_code == 202:
+        visualization_order_id = (
+            visualization_order_response
+            .json() 
+            .get('elaboreProduitAvecDemandeResponse')
+            .get('return')
+        )
+
+        visualization_climatological_response = Client().order_recovery(
+                visualization_order_id)
+        if visualization_climatological_response.status_code == 201:
+            visualization_climatological_data = visualization_climatological_response.text
+
+            # Import data in DataFrame
+            df = pd.read_csv(StringIO(visualization_climatological_data), sep=';',
+                            parse_dates=['DATE'])
+            # Convert 'object' to 'float'
+            string_col = df.select_dtypes(include=['object']).columns
+            for col in string_col:
+                df[col] = df[col].str.replace(',', '.')
+                df[col] = df[col].astype('float')
+            # Remove all variables with only NaN
+            df =  df.dropna(axis='columns')
+
+            return df
+
+
+def api_parameters_in_selected_category(category: str) -> list:
+    """List api parameters for selected category with radio button
+
+    Args:
+        category (str): category of variables.
+
+    Returns:
+        list: list of variables.
+    """   
+    return api_daily_parameters.loc[
+        api_daily_parameters['parameter_category'] == category, 'parameter'
+    ].tolist()
+
+
+def filter_climatological_data(raw_data: pd.DataFrame) -> pd.DataFrame:
+    """Filter columns of all retrieved climatological data in order to keep
+    only the columns which correspond to the variables in the selected
+    category.
+
+    Args:
+        raw_data (pd.DataFrame): the DataFrame to filter.
+
+    Returns:
+        pd.DataFrame: Filtered DataFrame.
+    """
+    if not raw_data.empty:
+        cols_to_keep = (
+            ['POSTE', 'DATE']
+            + list(set(api_parameters_in_selected_category(
+            st.session_state.selected_category_for_visualization
+            ))
+            .intersection(raw_data.columns))
+        )
+
+        return raw_data[cols_to_keep]
+
+
+def describe_climatological_data(data: pd.DataFrame) -> pd.DataFrame:
+    """Create descriptive statistics for climatological data.
+
+    Args:
+        data (pd.DataFrame): data to describe.
+
+    Returns:
+        pd.DataFrame: descriptive statistics.
+    """
+    df = data.iloc[:, 2:].describe().loc[['min', 'max', 'mean', '50%']]
+    df = df.rename(index={'min': 'Minimum','max': 'Maximum','mean': 'Moyenne',
+                          '50%': 'Médiane'})
+    return df
+
+
+# -- Set page config
+st.set_page_config(page_title='MétéoViz', page_icon='🌤️',
+                   initial_sidebar_state='expanded')
+
+# -- Set application title
+st.title('Visualisation de données météo')
+
+# -- Application sidebar
+
+with st.sidebar:
+
+    st.markdown('## Sélectionnez une commune')
+
+    st.text_input(
+        label='Quelle commune cherchez-vous ?',
+        placeholder='Saisissez votre recherche...',
+        value='',
+        key='city_search'
     )
 
-    return tm_date_value, tm_max_date_value, tm_time_limit
+    # Search for cities from the text input and list the results
+    city_search_response = utils.search_city(st.session_state.city_search)
+    if city_search_response.status_code == requests.codes.ok:
+        city_search_options = []
+        for _ in city_search_response.json().get('features'):
+            city_search_options.append(
+                {
+                'label': _['properties']['label'],
+                'context': _['properties']['context'],
+                'coordinates': _['geometry']['coordinates'][::-1]
+                }
+            )
+    else:
+        city_search_options = []
 
-@st.cache_data # prevent 'rerun' if raw data don't change
-def clean_data_for_metrics(raw_data):
-    '''
-    Clean archived data recovered from hourly climatology API.
-    Parameters:
-    - raw_data : csv response from the API.
-    Returns data in dictionnary compatible with 'display_observation_metrics' 
-    function.
-    '''
-    # Import data in DataFrame
-    df = pd.read_csv(StringIO(raw_data), sep=';')
-
-    # Convert 'object' data to 'float'
-    string_col = df.select_dtypes(include=['object']).columns
-    for col in string_col:
-        df[col] = df[col].str.replace(',', '.')
-        df[col] = df[col].astype('float')
-    # Replace Pandas 'NaN' with 'None'
-    df = df.replace(np.nan, None)
-    # Rename columns
-    df = df.rename(
-        columns={'NEIGETOT': 'sss', 'INS': 'insolh', 'PSTAT': 'pres'})
-    # Lower columns names
-    df.columns = df.columns.str.lower()
-    # Set index with 'previous' and 'current' indication
-    df['obs'] = ['previous_obs', 'current_obs']
-    df = df.set_index('obs')
-    # Convert units
-    try:
-        df['ff'] = round(df['ff'] * 3.6)
-    except TypeError:
-        pass
-    try:
-        df['vv'] = round((df['vv']/1000), 1)
-    except TypeError:
-        pass
-    try:
-        df['sss'] = round(df['sss'] * 100)
-    except TypeError:
-        pass
-    try:
-        df['pres'] = round(df['pres'])
-    except TypeError:
-        pass
-
-    # Convert DataFrame to dictionnary
-    data = df.to_dict('index')
-
-    return data
-
-# ------- Function for both 'current/past observation' sections in main page ------
-
-@st.cache_data # prevent 'rerun' if observation data don't change 
-def display_observation_metrics(data):
-    '''
-    Display metrics from observation data.
-    Parameters :
-    - data : dictionnary with data.
-    Returns 'st.metrics'
-    '''
-    def delta(x, y):
-        '''
-        Calculate 'delta' parameter for 'st.metrics'
-        '''
-        if x == y:
-            delta = None
-        elif x is None or y is None:
-            delta = None
-        else:
-            delta = x - y
-
-        return delta
     
+        st.cache_data.clear()
+        
+    st.selectbox(
+        label='Faites votre choix',
+        options=city_search_options,
+        index=None,
+        format_func=lambda x: f'{x['label']} ({x['context'].split(',')[0]})',
+        key='selected_city',
+        placeholder='Sélectionnez un résultat...'
+    )
+
+    def del_searched_and_selected_city():
+        """Remove search and selected city from session state and clear cache."""
+        st.session_state.city_search = ''
+        st.session_state.selected_city = None
+    
+    st.button('Effacer', on_click=del_searched_and_selected_city)
+    
+    if st.session_state.selected_city:
+        st.markdown('## Station météo la plus proche')
+
+        st.session_state.nearest_station_info = get_station_info(
+            st.session_state.selected_city.get('coordinates'))
+
+        # Display nearest station information in expander
+        with st.expander(
+            f'{st.session_state.nearest_station_info.get('nom_usuel')} '
+            f'({st.session_state.nearest_station_info.get('city')}, '
+            f'{st.session_state.nearest_station_info.get('context')})'
+        ):
+
+            nearest_station_text = f'''
+                * id : {st.session_state.nearest_station_info.get('id_station')}
+                * Altitude : {st.session_state.nearest_station_info.get('altitude')} m
+                * Distance de {st.session_state.selected_city.get('label')} : 
+                {st.session_state.nearest_station_info.get('distance'):.1f} km
+                * Date d'ouverture : {
+                    st.session_state.nearest_station_info.get('date_ouverture'):%d/%m/%Y}
+            '''
+
+            st.markdown(nearest_station_text)
+
+    if 'selected_category_for_visualization' not in st.session_state:
+        st.session_state.selected_category_for_visualization = []
+
+    if st.session_state.selected_category_for_visualization:
+        st.markdown('## Définition des variables')
+
+        api_daily_parameters = import_api_daily_parameters()
+
+        parameters_list = api_parameters_in_selected_category(
+            st.session_state.selected_category_for_visualization
+        )
+
+        text = ''
+        for row in api_daily_parameters.loc[
+            api_daily_parameters['parameter'].isin(parameters_list)
+        ].itertuples():
+            parameter_text = f'* **{row.parameter} ({row.unit})** : {row.label.lower()}\n'
+            text = text + parameter_text
+
+        with st.expander('Afficher les définitions', expanded=True):
+            st.markdown(text)
+    
+# -- Application main page
+
+if st.session_state.selected_city:
+
+    # -- Display current observation section
+
+    st.subheader('Observations en temps réel')
+
+    # Get observation data
+    current_obs, previous_obs = get_observation(
+        st.session_state.nearest_station_info.get('id_station'))
+    
+    # Layout observation in metric widgets
     with st.container(border=True):
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            d = delta(data['current_obs']['t'], data['previous_obs']['t'])
-            c = data['current_obs']['t']
+            c = current_obs.get('t')
+            d = utils.calculate_delta(
+                current_obs.get('t'), previous_obs.get('t'), 0)
             st.metric(
                 label='Température',
-                value=(f'{c:.1f} °C') if c is not None else None,
+                value=(f'{(c-273):.1f} °C') if c is not None else None,
                 delta=(f'{d:.1f} °C') if d is not None else None
             )
         with col2:
-            d = delta(data['current_obs']['u'], data['previous_obs']['u'])
-            c = data['current_obs']['u']
+            c = current_obs.get('u')
+            d = utils.calculate_delta(
+                current_obs.get('u'), previous_obs.get('u'), 0)
             st.metric(
                 label='Humidité',
                 value=(f'{c} %') if c is not None else None,
-                delta=(f'{d:.0f} %') if d is not None else None
+                delta=(f'{d} %') if d is not None else None
             )
         with col3:
-            d = delta(data['current_obs']['ff'], data['previous_obs']['ff'])
-            c = data['current_obs']['ff']
+            c = current_obs.get('ff')
+            d = utils.calculate_delta(
+                current_obs.get('ff'), previous_obs.get('ff'), 0)
             st.metric(
                 label='Vent',
-                value=(f'{c:.0f} km/h') if c is not None else None,
-                delta=(f'{d:.0f} km/h') if d is not None else None
+                value=(f'{(c*3.6):.0f} km/h') if c is not None else None,
+                delta=(f'{(d*3.6):.0f} km/h') if d is not None else None
             )
         with col4:
-            d = delta(data['current_obs']['rr1'], data['previous_obs']['rr1'])
-            c = data['current_obs']['rr1']
+            c = current_obs.get('rr1')
+            d = utils.calculate_delta(
+                current_obs.get('rr1'), previous_obs.get('rr1'), 0)
             st.metric(
                 label='Précipitations 1h',
                 value=(f'{c:.1f} mm') if c is not None else None,
@@ -255,304 +386,375 @@ def display_observation_metrics(data):
 
         col5, col6, col7, col8 = st.columns(4)
         with col5:
-            d = delta(data['current_obs']['vv'], data['previous_obs']['vv'])
-            c = data['current_obs']['vv']
+            c = current_obs.get('vv')
+            d = utils.calculate_delta(
+                current_obs.get('vv'), previous_obs.get('vv'), 0)
             st.metric(
                 label='Visibilité',
-                value=(f'{c:.1f} km') if c is not None else None,
-                delta=(f'{d:.1f} km') if d is not None else None
+                value=(f'{(c/1000):.1f} km') if c is not None else None,
+                delta=(f'{(d/1000):.1f} km') if d is not None else None
             )
         with col6:
-            d = delta(data['current_obs']['sss'], data['previous_obs']['sss'])
-            c = data['current_obs']['sss']
+            c = current_obs.get('sss')
+            d = utils.calculate_delta(
+                current_obs.get('sss'), previous_obs.get('sss'), 0)
             st.metric(
                 label='Neige',
-                value=(f'{c:.0f} cm') if c is not None else None,
-                delta=(f'{d:.0f} cm') if d is not None else None
+                value=(f'{(c*100):.0f} cm') if c is not None else None,
+                delta=(f'{(d*100):.0f} cm') if d is not None else None
             )
         with col7:
-            d = delta(data['current_obs']['insolh'], data['previous_obs']['insolh'])
-            c = data['current_obs']['insolh']
+            c = current_obs.get('insolh')
+            d = utils.calculate_delta(
+                current_obs.get('insolh'), previous_obs.get('insolh'), 0)
             st.metric(
                 label='Ensoleillement',
-                value=(f'{c:.0f} min') if c is not None else None,
-                delta=(f'{d:.0f} min') if d is not None else None
+                value=(f'{c} min') if c is not None else None,
+                delta=(f'{d} min') if d is not None else None
             )
         with col8:
-            d = delta(data['current_obs']['pres'], data['previous_obs']['pres'])
-            c = data['current_obs']['pres']
+            c = current_obs.get('pres')
+            d = utils.calculate_delta(
+                current_obs.get('pres'), previous_obs.get('pres'), 0.1)
             st.metric(
                 label='Pression',
-                value=(f'{c:.0f} hPa') if c is not None else None,
-                delta=(f'{d:.0f} hPa') if d is not None else None
+                value=(f'{(c/100):.0f} hPa') if c is not None else None,
+                delta=(f'{(d/100):.0f} hPa') if d is not None else None
             )
         
-        if 'validity_time' in data['current_obs']:
-            st.caption(f'📅 {data['current_obs']['validity_time']}')
+        if 'validity_time' in current_obs:
+            observation_datetime_utc = datetime.strptime(
+                current_obs.get('validity_time'),
+                '%Y-%m-%dT%H:%M:%SZ'
+            ).replace(tzinfo=ZoneInfo('UTC'))
+            st.caption(
+                f'📅 {observation_datetime_utc.astimezone(tz=ZoneInfo('Europe/Paris'))}')
 
-# ------- Functions for visualisation section in main page ------
+    # -- Display observation at another date section
 
-@st.cache_data
-def get_clean_data_for_viz(id_station, year):
-    '''
-    Parameter :
-    - - id_station : id of the station ;
-    - year : the year for which to get data.
-    Returns data in a DataFrame ready for plotting.
-    '''
-    # Define the start datetime (if selected year is the opening year we 
-    # probably can't start the period at beginning of January)
-    if year == station_open_date.year:
-        viz_start_datetime = f'{station_open_date}T00:00:00Z'
-    else:
-        viz_start_datetime = f'{year}-01-01T00:00:00Z'
-    # Define the end datetime (if selected year is the current year we probably
-    # can't end the period at end of December)
-    if year == datetime.now().year:
-        viz_end_datetime = (
-            datetime.now().date() - timedelta(days=1)
-        ).strftime('%Y-%m-%dT00:00:00Z')
-    else:
-        viz_end_datetime = f'{year}-12-31T00:00:00Z'
+    st.subheader('Observations à une date antérieure')
 
-    # Call Météo France APIs to get data for selected year
-    viz_order = Client().order_daily_weather_info(
-        id_station, viz_start_datetime, viz_end_datetime)
-    viz_raw_data = Client().get_order_data(viz_order)
-
-    # Import data in DataFrame
-    df = pd.read_csv(StringIO(viz_raw_data), sep=';', parse_dates=['DATE'])
-
-    # Convert 'object' to 'float'
-    string_col = df.select_dtypes(include=['object']).columns
-    for col in string_col:
-        df[col] = df[col].str.replace(',', '.')
-        df[col] = df[col].astype('float')
-    # Lower columns names
-    df.columns = df.columns.str.lower()
-    # Remove all variables with only NaN
-    df = df.dropna(axis='columns')
-
-    return df
-
-st.title('Météo app')
-
-# ------- Main code of app : sidebar ------
-
-with st.sidebar:
-    
-    st.markdown('## 🗺️ Commune')
-
-    st.text_input(
-        label='👉 1. Chercher',
-        placeholder='Saisissez votre recherche...',
-        value='',
-        key='search_input'
-    )
-
-    st.selectbox(
-        label='👉 2. Faites votre choix',
-        options=search_municipality(st.session_state['search_input']),
-        index=None,
-        format_func=lambda x: f'{x['label']} ({x['context'].split(',')[0]})',
-        key='selected_city',
-        placeholder='Sélectionnez un résultat...'
-    )
-    
-    def click_del():
-        st.session_state['search_input'] = ''
-        st.session_state['selected_city'] = None
-
-    st.button('Effacer', on_click=click_del)
-    
-    if st.session_state['selected_city']:
-        st.markdown('## 🗼 Station météo')
-        id_station, station_open_date = get_display_station_info(
-            st.session_state['selected_city'])
-
-
-# ------- Main code of app : page ------
-    
-if st.session_state['selected_city']:
-
-    st.markdown('#### 🌡️ Observations en temps réel')
-
-    # Get data from API and display metrics
-    current_data = get_current_data(id_station)
-    display_observation_metrics(current_data)
-
-    st.markdown('#### ⏲️ Observations à une date antérieure')
-
-    with st.form('tm'):
+    # Layout requested date and time of observation in form widget
+    with st.form('other_date'):
         st.write('''
-            **Remontez le temps** et afficher les relevés de la station 
+            **Remontez le temps** et afficher le relevé de la station 
             d'observation **à une date antérieure**.
         ''')
 
-        # Get valide date and time parameters for inputs
-        tm_date_value, tm_max_date_value, tm_time_limit = tm_input_parameters()
+        # Set date and time limit for the selection
+        now = datetime.now()
+        now_utc = datetime.now().astimezone(tz=ZoneInfo('UTC'))
 
-        col1, col2 = st.columns(2)
-        with col1:
-            tm_selected_date = st.date_input(
+        if now_utc.time() < time(11, 45, 0):
+            max_date_value = now_utc.date() - timedelta(days=1)
+            date_value = max_date_value
+        else:
+            max_date_value = now_utc.date()
+            date_value = max_date_value
+
+        time_limit = (
+        datetime(2023, 1, 1, 5, 0, 0, tzinfo=ZoneInfo('UTC'))
+        .astimezone(ZoneInfo('Europe/Paris'))
+        .time()
+        )
+
+        # Layout date and time selection in date and time input widgets
+        col9, col10 = st.columns(2)
+        with col9:
+            st.date_input(
                 label='Précisez une date...',
-                value=tm_date_value,
-                max_value=tm_max_date_value
+                value=date_value,
+                max_value=max_date_value,
+                key='other_date_selected'
             )
-        with col2:
-            tm_selected_time = st.time_input(
+        with col10:
+            st.time_input(
                 label='...et une heure',
-                value=tm_time_limit,
+                value=time_limit,
                 step=3600,
-                label_visibility='visible'
+                key='other_time_selected'
             )
 
-        tm_validate = st.form_submit_button('Valider')
-    
-        # Check if selected time respect Météo France API rules
+        other_date_validated = st.form_submit_button('Afficher les observations')
+
+
+    if other_date_validated:
+
         def check_datetime_limit():
-            return ((tm_selected_date == tm_max_date_value)
-                    and (tm_selected_time > tm_time_limit))
+            """Check if selected date and time respect Météo France api rules"""
+            return ((st.session_state.other_date_selected == max_date_value) 
+                    and (st.session_state.other_time_selected > time_limit))
 
-        if tm_validate:
-            if not check_datetime_limit():
-            # Set start and end datetime for the request
-                tm_start_datetime = (
-                    datetime.combine(tm_selected_date, tm_selected_time)
-                    - timedelta(hours=1)
-                ).strftime('%Y-%m-%dT%H:%M:%SZ')
-                tm_end_datetime = (
-                    datetime.combine(tm_selected_date, tm_selected_time)
-                ).strftime('%Y-%m-%dT%H:%M:%SZ')
+        # Get observation data
+        if not check_datetime_limit():
+            dict_other_date = get_other_date_observation(
+                st.session_state.nearest_station_info.get('id_station'),
+                st.session_state.other_date_selected,
+                st.session_state.other_time_selected
+            )
 
-                # Get data from APIs
-                tm_order = Client().order_hourly_weather_info(
-                    id_station,
-                    datetime_tz_convert(tm_start_datetime, 'local_to_utc'),
-                    datetime_tz_convert(tm_end_datetime, 'local_to_utc')
-                )
-                tm_raw_data = Client().get_order_data(tm_order)
+            # Layout observation in metric widgets
+            with st.container(border=True):
+                col11, col12, col13, col14 = st.columns(4)
+                with col11:
+                    c = dict_other_date.get('current_obs').get('T')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('T'),
+                        dict_other_date.get('previous_obs').get('T'),
+                        0
+                    )
+                    st.metric(
+                        label='Température',
+                        value=(f'{(c):.1f} °C') if c is not None else None,
+                        delta=(f'{d:.1f} °C') if d is not None else None
+                    )
+                with col12:
+                    c = dict_other_date.get('current_obs').get('U')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('U'), 
+                        dict_other_date.get('previous_obs').get('U'),
+                        0
+                    )
+                    st.metric(
+                        label='Humidité',
+                        value=(f'{c} %') if c is not None else None,
+                        delta=(f'{d} %') if d is not None else None
+                    )
+                with col13:
+                    c = dict_other_date.get('current_obs').get('FF')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('FF'),
+                        dict_other_date.get('previous_obs').get('FF'),
+                        0
+                    )
+                    st.metric(
+                        label='Vent',
+                        value=(f'{(c*3.6):.0f} km/h') if c is not None else None,
+                        delta=(f'{(d*3.6):.0f} km/h') if d is not None else None
+                    )
+                with col14:
+                    c = dict_other_date.get('current_obs').get('RR1')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('RR1'),
+                        dict_other_date.get('previous_obs').get('RR1'),
+                        0
+                    )
+                    st.metric(
+                        label='Précipitations 1h',
+                        value=(f'{c:.1f} mm') if c is not None else None,
+                        delta=(f'{d:.1f} mm') if d is not None else None
+                    )
 
-                # Prepare data and display metrics
-                tm_data = clean_data_for_metrics(tm_raw_data)
-                display_observation_metrics(tm_data)
+                col15, col16, col17, col18 = st.columns(4)
+                with col15:
+                    c = dict_other_date.get('current_obs').get('VV')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('VV'),
+                        dict_other_date.get('previous_obs').get('VV'),
+                        0
+                    )
+                    st.metric(
+                        label='Visibilité',
+                        value=(f'{(c/1000):.1f} km') if c is not None else None,
+                        delta=(f'{(d/1000):.1f} km') if d is not None else None
+                    )
+                with col16:
+                    c = dict_other_date.get('current_obs').get('NEIGETOT')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('NEIGETOT'),
+                        dict_other_date.get('previous_obs').get('NEIGETOT'),
+                        0
+                    )
+                    st.metric(
+                        label='Neige',
+                        value=(f'{(c*100):.0f} cm') if c is not None else None,
+                        delta=(f'{(d*100):.0f} cm') if d is not None else None
+                    )
+                with col17:
+                    c = dict_other_date.get('current_obs').get('INS')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('INS'),
+                        dict_other_date.get('previous_obs').get('INS'),
+                        0
+                    )
+                    st.metric(
+                        label='Ensoleillement',
+                        value=(f'{c} min') if c is not None else None,
+                        delta=(f'{d} min') if d is not None else None
+                    )
+                with col18:
+                    c = dict_other_date.get('current_obs').get('PSTAT')
+                    d = utils.calculate_delta(
+                        dict_other_date.get('current_obs').get('PSTAT'),
+                        dict_other_date.get('previous_obs').get('PSTAT'),
+                        0.1
+                    )
+                    st.metric(
+                        label='Pression',
+                        value=(f'{(c):.0f} hPa') if c is not None else None,
+                        delta=(f'{(d):.0f} hPa') if d is not None else None
+                    )
+
+        else:
+            st.warning(f'⏲️ L\'heure sélectionnée est trop récente : elle ne peut '
+                       f'pas dépasser {time_limit:%Hh%M}.')
             
-            else:
-                st.warning(f'L\'heure sélectionnée est trop récente : elle ne peut '
-                       f'pas dépasser {tm_time_limit:%Hh%M}.')
+    else:
+        st.info(f'👆 Pour afficher les observations désirées, validez votre '
+                f'choix en cliquant sur le bouton ci-dessus.')
 
-    st.markdown('#### 📈 Historique et statistiques des observations')
+    # -- Display yearly evolution and statistics section
+        
+    st.subheader('Evolution annuelle et statistiques')
 
-    # Store the initial values for widgets in session state 
-    if 'viz_data' not in st.session_state:
-        st.session_state['viz_data'] = pd.DataFrame()
-
-    if 'viz_selected_option' not in st.session_state:
-            st.session_state['viz_selected_option'] = None
-
-    # Create a descending list of years from the station opening until now
-    viz_years_list = list(
-        range(station_open_date.year, (datetime.now().year+1), 1))[::-1]
-    
+    # Layout year selection
     with st.container(border=True):
         st.write('''Visualisez **l'évolution** des **variables** pour 
                  **l'année** de votre choix.''')
         
-        def clear_viz_data():
-            st.session_state['viz_data'] = pd.DataFrame()
-
-        viz_selected_year = st.selectbox(
-                label='Sélectionnez une année',
-                options=viz_years_list,
-                index=1,
-                on_change=clear_viz_data
+        # List years from the station opening until now
+        select_year_options = list(
+            range(
+                st.session_state.nearest_station_info.get('date_ouverture').year,
+                (datetime.now().year+1),
+                1
+            )
         )
 
-        if st.button('Valider'):
-            st.session_state['viz_data'] = get_clean_data_for_viz(
-                id_station, viz_selected_year)
+        if 'climatological_data' not in st.session_state:
+            st.session_state.climatological_data = pd.DataFrame()
+    
+        def clear_visualization_data():
+            """Clear the DataFrame used for visualization, clear the selected 
+            category and change button state each time the year changes."""
+            st.session_state.climatological_data = pd.DataFrame()
+            st.session_state.visualization_button_clicked = False
+            st.session_state.selected_category_for_visualization = []
 
-        radio_options = ['Température', 'Humidité', 'Vent', 'Précipitations',
-                            'Ensoleillement', 'Neige']
+        # Layout year selection in widget
+        st.selectbox(
+            label='Sélectionnez une année',
+            options=select_year_options[::-1],
+            index=1,
+            on_change=clear_visualization_data,
+            key='year_for_visualization'
+        )
 
+        if 'visualization_button_clicked' not in st.session_state:
+            st.session_state.visualization_button_clicked = False
+
+        def click_visualization_button():
+            st.session_state.visualization_button_clicked = True
+
+        st.button('Récupérer les données', on_click=click_visualization_button)
+
+    # Get data for selected year
+    if st.session_state.visualization_button_clicked:
+        st.session_state.climatological_data = get_year_climatological_data(
+            st.session_state.nearest_station_info.get('id_station'),
+            st.session_state.year_for_visualization
+        )
+        
+        # Layout category of variables selection in radio widget
         st.radio(
-        label='Sélectionnez une variable à afficher',
-        options=radio_options,
-        index=0,
-        horizontal=True,
-        key='viz_selected_option'
+            label='Quelle catégorie de variables souhaitez-vous visualiser ?',
+            options=['Température', 'Humidité', 'Vent', 'Précipitations',
+                    'Ensoleillement', 'Neige'],
+            index=None,
+            horizontal=True,
+            key='selected_category_for_visualization'
         )
 
-    variables_to_plot = api_daily_parameters.loc[
-        api_daily_parameters['viz_option'] 
-        == st.session_state['viz_selected_option'],
-        'variable'
-    ].tolist()
-
-    if st.session_state['viz_data'].columns.isin(variables_to_plot).any():
-        st.write(st.session_state['viz_data'][variables_to_plot].describe().loc[['min', 'max', 'mean', '50%', 'std']])
-    
-
-    fig1 = go.Figure()
-    for variable in variables_to_plot:
-        if variable in st.session_state['viz_data'].columns and st.session_state['viz_data'][variable].sum() > 0:
-            if api_daily_parameters.loc[api_daily_parameters['variable'] == variable, 'viz_graph_type'].item() == 'line':
- 
-                fig1.add_trace(go.Scatter(
-                
-                x=st.session_state['viz_data']['date'],
-                y=st.session_state['viz_data'][variable],
-                # title=viz_selected_variable,
-                # labels={
-                #     'date': 'Date',
-                #     'value': 'Valeur',
-                #     'variable': 'Variables'
-                # }
-            ))
-                
-            elif api_daily_parameters.loc[api_daily_parameters['variable'] == variable, 'viz_graph_type'].item() == 'bar':
- 
-                fig1.add_trace(go.Bar(
-                
-                x=st.session_state['viz_data']['date'],
-                y=st.session_state['viz_data'][variable],
-                # title=viz_selected_variable,
-                # labels={
-                #     'date': 'Date',
-                #     'value': 'Valeur',
-                #     'variable': 'Variables'
-                # }
-            ))
-    fig1.update_layout(legend=dict(x=0, y=1.15, orientation='h'))
-
-
-    # Histogramme WIP
-
-    # Initialise un histogramme combiné
-    fig2 = go.Figure()
-    # Ajoute chaque variable au graphique
-    for variable in variables_to_plot:
-        fig2.add_trace(go.Histogram(x=st.session_state['viz_data'][variable], nbinsx=10, name=variable, opacity=0.8))
-    # Met en forme le graphique
-    fig2.update_layout(
-        title='Distribution',
-        barmode='overlay',
-        xaxis=dict(title='Valeurs'),
-        yaxis=dict(title='Fréquence')
-    )
-    
-    # Boxplot WIP
-    fig3 = px.box(st.session_state['viz_data'][list(variables_to_plot)], points='all', title='Boxplot')
-    
-
-    if len(fig1.data) > 0:
-        st.plotly_chart(fig1)
-        st.plotly_chart(fig2)
-        st.plotly_chart(fig3)
     else:
-        st.info('Rien à tracer')
+        st.info(f'👆 Pour visualiser les données, cliquez d\'abord sur le '
+                'bouton ci-dessus pour les récupérer.')
 
-                        
+    # Initialize and prepare data to plot
+    data_to_plot = pd.DataFrame()
+
+    if st.session_state.selected_category_for_visualization:
+        data_to_plot = filter_climatological_data(st.session_state.climatological_data)
+
+        
+    if len(data_to_plot.columns) > 2 and not (data_to_plot.iloc[:, 2:] == 0).all().all():
+
+        # -- Display yearly evolution in plotly widget
+
+        st.markdown('#### Evolution annuelle')
+
+        # Set type of plot for each category of parameters
+        plot_type_per_category = {
+            'Vent': 'line',
+            'Ensoleillement': 'bar',
+            'Neige': 'bar',
+            'Précipitations': 'bar',
+            'Température': 'line',
+            'Humidité': 'line'
+        }
+
+        # Plot evolution in line or bar plot
+        if plot_type_per_category[st.session_state.selected_category_for_visualization] == 'line':
+            fig = px.line(
+                data_to_plot,
+                x='DATE',
+                y=data_to_plot.iloc[:, 2:].columns,
+                labels={'DATE': 'Date', 'value': 'Valeur', 'variable': 'Variable(s)'}
+            )
+        if plot_type_per_category[st.session_state.selected_category_for_visualization] == 'bar':
+            fig = px.bar(
+                data_to_plot,
+                x='DATE',
+                y=data_to_plot.iloc[:, 2:].columns,
+                labels={'DATE': 'Date', 'value': 'Valeur', 'variable': 'Variable(s)'}
+            )
+        fig.update_layout(legend=dict(x=0, y=1.15, orientation='h'))
+
+        if len(fig.data) != 0:
+            st.plotly_chart(fig)
+
+        # -- Display description of data in DataFrame widget
+
+        st.markdown('#### Statistiques descriptives')
+
+        st.dataframe(
+            describe_climatological_data(data_to_plot).style.format(precision=1),
+            use_container_width=True
+        )
+
+        # -- Display data histogram in plotly widget
+
+        st.markdown('#### Distribution des variables')
+
+        fig = px.histogram(
+            data_to_plot,
+            x=data_to_plot.iloc[:, 2:].columns,
+            labels={'value': 'Valeur', 'variable': 'Variable(s)'}
+        )
+
+        fig.update_layout(yaxis=dict(title='Fréquence'))
+        fig.update_layout(legend=dict(x=0, y=1.15, orientation='h'))
+        
+        st.plotly_chart(fig)
+
+        # -- Display data histogram in plotly widget
+
+        st.markdown('#### Dispersion des variables')
+
+        fig = px.box(
+            data_to_plot,
+            x=data_to_plot.iloc[:, 2:].columns,
+            labels={'value': 'Valeur', 'variable': 'Variable(s)'}
+        )
+
+        st.plotly_chart(fig)
+
+    elif st.session_state.selected_category_for_visualization:
+        st.info(
+            f'Les données de **« {st.session_state.selected_category_for_visualization} »** '
+            f'ne sont pas disponibles pour l\'année  **{st.session_state.year_for_visualization}**. '
+            f'Sélectionnez une autre année et/ou une autre catégorie.'
+        )
+                
 else:
     st.info('''
         ### 📢 Aucune commune n'est sélectionnée !
@@ -562,3 +764,18 @@ else:
         Pour cela, utilisez la **zone de recherche** située dans le **menu 
         latéral** puis **faites votre choix** parmi les **résultats proposés**.
     ''')
+
+# -- Display 'about' section
+
+st.subheader('A propos de l\'application')
+
+st.markdown('''
+    L' application VizMétéo permet d\'afficher des **données publiques d\'observation 
+    ou de climatologie pour la France** à partir des API de Météo France.
+''')
+
+st.caption('''
+    Auteur : T. Anquetil ([GitHub](https://github.com/anquetos) & 
+           [LinkedIn](https://www.linkedin.com/in/thomas-anquetil-132a73123)) 
+           · Février 2024
+''')

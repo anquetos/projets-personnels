@@ -1,26 +1,22 @@
-# Module with functions to resquest the following Météo France APIs :
-# - Observation data ;
-# - Climatological data.
-#
-# The first part about implementation for a continuous authentication client
-# is from Météo France FAQ (https://portail-api.meteofrance.fr/web/fr/faq).
-#
-# It is necessary to have an APPLICATION_ID. see 'Mes APIs > Token' on website.
+"""
+Querying 'Observation data' and 'Climatological data' apis of Météo France 
+while managing token regeneration.
 
-#------------------------------------------------------------
-# First part from Météo France FAQ
-#------------------------------------------------------------
+Token regeneration code comes from Météo France API portal FAQ 
+(https://portail-api.meteofrance.fr/web/fr/faq).
+
+An APPLICATION_ID is needed, to get it :
+1. Click on the user account in connected mode (top right) 
+> 'My API' > Choose an API > Click 'Generate Token'.
+2. The APPLICATION_ID can be found in the cURL command at the bottom of the page.
+"""
 
 import requests
-import pandas as pd
-from io import StringIO
+from streamlit import secrets
 
-# Unique application id : you can find this in the curl's command to generate
-# jwt token 
-APPLICATION_ID = 'NFpkTkNZa2lCVE0xVHhYS3Azbk9YcF9hbTZzYTpoVkZFUzVEeHU2dVRPajhqQm9BYm1ZenJ6dU1h'
+import constants
 
-# Url to obtain acces token
-TOKEN_URL = "https://portail-api.meteofrance.fr/token"
+APPLICATION_ID = secrets.APPLICATION_ID
 
 class Client(object):
 
@@ -62,7 +58,7 @@ class Client(object):
         data = {'grant_type': 'client_credentials'}
         headers = {'Authorization': 'Basic ' + APPLICATION_ID}
         access_token_response = requests.post(
-            TOKEN_URL,
+            constants.TOKEN_URL,
             data=data,
             verify=True,
             allow_redirects=False,
@@ -72,133 +68,94 @@ class Client(object):
         # Update session with fresh token
         self.session.headers.update({'Authorization': 'Bearer %s' % token})
 
-#------------------------------------------------------------
-# Below functions have been added to make the needed requests
-#------------------------------------------------------------
 
-    def get_stations_list(self):
-        '''
-        Get the list of observation stations.
-        '''
+    def get_stations_list(self) -> requests.Response:
+        """Get the list of observation stations from the API.
+
+        Returns:
+            requests.Response: Response from the API with the data in csv.
+        """
         self.session.headers.update({'Accept': 'application/json'})
-        response = self.request(
+        r = self.request(
             method='GET',
-            url='https://public-api.meteofrance.fr/public/DPObs/v1/liste-stations'
+            url=constants.STATION_LIST_URL
         )
 
-        return response.text
+        return r
     
 
-    def get_observation(self, id_station: str, date):
-        '''
-        Get available data for one observation station at a specific
-        date-time for the current year. If date-time not indicated, actual
-        date-time returned.
-        Parameters :
-        - id_station : id number (string) ;
-        - date : date of observation (string) in ISO 8601 format with
-        TZ UTC AAAA-MM-JJThh:00:00Z.
-        '''
+    def get_hourly_observation(self, id_station: str, date: str) -> requests.Response:
+        """Get all available parameters for the requested station and for the 
+        date/time closest to the requested date according to available data.
+
+        Args:
+            id_station (str): station id number ;
+            date (str): requested date (ISO 8601 format with
+        TZ UTC AAAA-MM-JJThh:00:00Z).
+
+        Returns:
+            requests.Response: Response from the API with the data in json.
+        """
         self.session.headers.update({'Accept': 'application/json'})
         payload={
             'id_station': id_station,
             'date': date,
             'format': 'json'
         }
-        response = self.request(
+        r = self.request(
             method='GET',
-            url='https://public-api.meteofrance.fr/public/DPObs/v1/station/horaire',
+            url=constants.HOURLY_OBSERVATION_URL,
             params=payload
         )
 
-        if response.status_code == 200:
-
-            status_code = response.status_code
-
-            response = response.json()[0]
-
-            # Convert temperature from Kelvin to Celsisus
-            if response['t'] is not None:
-                t = round((response['t']-273), 1)
-            else:
-                t = None
-
-            # Convert mean wind speed from m/s to km/h
-            if response['ff'] is not None:
-                ff = round(response['ff'] * 3.6)
-            else:
-                ff = None
-
-            # Convert visibilité from m to km
-            if response['vv'] is not None:
-                vv = round((response['vv']/1000), 1)
-            else:
-                vv = None
-
-            # Convert snow from m to cm
-            if response['sss'] is not None:
-                sss = round(response['sss'] * 100)
-            else:
-                sss = None
-
-            # Convert pressure from Pa to hPa
-            if response['pres'] is not None:
-                pres = round((response['pres']/100), 1)
-            else:
-                pres = None
-
-            # Build data
-            data = {
-                'status_code': status_code,
-                'validity_time_utc': response['validity_time'],
-                # 'validity_time': time_local,
-                't': t,
-                'u': response['u'],
-                'ff': ff,
-                'rr1': response['rr1'],
-                'vv': vv,
-                'sss': sss,
-                'insolh': response['insolh'],
-                'pres': pres
-            }
-        
-        else:
-            data = {
-                'status_code': response.status_code,
-                'reason' : response.reason
-            }
-
-        return data
+        return r
     
 
-    def order_hourly_weather_info(
-            self, id_station: str, start_date: str, end_date: str):
-        '''
-        Get an order number for asynchronous download of hourly weather
-        information for one observation station in a period of date.
-        Parameters :
-        - id_station : id number (string) ;
-        - start_date : start of period for the order (string) in ISO 8601 format
-        with TZ UTC AAAA-MM-JJThh:00:00Z ;
-        - end_date : end of period for the order (string) in ISO 8601 format
-        with TZ UTC AAAA-MM-JJThh:00:00Z.
-        '''
+    def order_hourly_climatological_data(
+            self, id_station: str, start_date: str, end_date: str) -> requests.Response:
+        """Order climatological data for the requested station for the period
+        defined by the start date and the end date at an hourly frequency.
+
+        Args:
+            id_station (str): station id number ;
+            start_date (str): requested start date (ISO 8601 format with
+        TZ UTC AAAA-MM-JJThh:00:00Z).
+            end_date (str): requested end date (ISO 8601 format with
+        TZ UTC AAAA-MM-JJThh:00:00Z).
+
+        Returns:
+            requests.Response: Response from the API with order id in a json.
+        """
         self.session.headers.update({'Accept': 'application/json'})
         payload={
             'id-station': id_station,
             'date-deb-periode': start_date,
             'date-fin-periode': end_date
         }
-        response = self.request(
+        r = self.request(
             method='GET',
-            url='https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire',
+            url=constants.ORDER_HOURLY_CLIMATOLOGICAL_URL,
             params=payload
         )
 
-        return response.json()['elaboreProduitAvecDemandeResponse']['return']
-    
-    def order_daily_weather_info(
-            self, id_station: str, start_date: str, end_date: str):
+        return r
+
+
+    def order_daily_climatological_data(
+            self, id_station: str, start_date: str, end_date: str) -> requests.Response:
+        """Order climatological data for the requested station for the period
+        defined by the start date and the end date at a daily frequency.
+
+        Args:
+            id_station (str): station id number ;
+            start_date (str): requested start date (ISO 8601 format with
+        TZ UTC AAAA-MM-JJThh:00:00Z).
+            end_date (str): requested end date (ISO 8601 format with
+        TZ UTC AAAA-MM-JJThh:00:00Z).
+
+        Returns:
+            requests.Response: Response from the API with order id in a json.
+        """
         '''
         Get an order number for asynchronous download of daily weather
         information for one observation station in a period of date.
@@ -215,35 +172,42 @@ class Client(object):
             'date-deb-periode': start_date,
             'date-fin-periode': end_date
         }
-        response = self.request(
+        r = self.request(
             method='GET',
-            url='https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/quotidienne',
+            url=constants.ORDER_DAILY_CLIMATOLOGICAL_URL,
             params=payload
         )
 
-        return response.json()['elaboreProduitAvecDemandeResponse']['return']
+        return r
     
 
-    def get_order_data(self, order_number: str):
-        '''
-        Get the weather information data for a specific order generated with
-        'order_daily_weather_daily() or 'order_daily_weather_info() function'.
-        Parameter :
-        - order_number (string).
-        '''
+    def order_recovery(self, order_id: str) -> requests.Response:
+        """Retrieve data from an order.
+
+        Args:
+            order_id (str): id of the order.
+
+        Returns:
+            requests.Response: Response from the API with the data in csv.
+        """
         self.session.headers.update({'Accept': 'application/json'})
-        payload={'id-cmde': order_number}
-        response = self.request(
+        payload={'id-cmde': order_id}
+        r = self.request(
             method='GET',
-            url='https://public-api.meteofrance.fr/public/DPClim/v1/commande/fichier',
+            url=constants.ORDER_RECOVERY_URL,
             params=payload
         )
 
-        return response.text
+        return r
 
 
 def main():
-    client=Client()
+    client = Client()
+    # r = client.order_hourly_climatological_data('76540009', '2024-02-04T04:00:00Z', '2024-02-04T04:00:00Z')
+    # print(r.json().get('elaboreProduitAvecDemandeResponse').get('return'))
+
+    r = client.order_recovery('761044914939')
+    print(r.text)
 
 
 if __name__ == '__main__':

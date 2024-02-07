@@ -1,68 +1,135 @@
-# Import libraries
+from pathlib import Path
+import math
+
 import requests
+import pandas as pd
 from geopy import distance
-from datetime import datetime
-import pytz
 
 
-# Functions used in the app
+from meteo_france import Client
+import constants
 
-def search_municipality(query: str):
-    '''
-    Search French municipality with the Adresse API and returns a list of
-    tuples (label: label and context of municipality, value: coordinates of 
-    municipality).
 
-    Parameters:
-    - query : string to look for.
+def download_station_list_to_csv():
+    """Download in csv the stations list requested from Météo France API."""
+    # Set folder and filename
+    DATASETS_FOLDER = 'datasets'
+    FILENAME = 'weather-stations-list.csv'
 
-    Returns a maximum of 5 results in a dictionnay.
-    '''
-    # Requests Adresse API
-    r = requests.get(
-        'https://api-adresse.data.gouv.fr/search/',
-        params={
-            'q': query,
-            'type': 'municipality',
-            'limit': 5,
-            'autocomplete': 1
-        }
-    )
-    # Check if the request as succeeded
-    if r.status_code == 200:
-        # Parse the response in dictionnary
-        results = r.json()['features']
-        # first element will be shown in search, second is returned from 
-        # component
-        data = [
-            {
-                'label': result['properties']['label'],
-                'context': result['properties']['context'],
-                'coordinates': result['geometry']['coordinates'][::-1]
-            }
+    client = Client()
+    r = client.get_stations_list()
 
-            for result in results
-        ]
+    if r.status_code == requests.codes.ok:
+        # Generate the csv filepath
+        p = Path(__file__).parent.absolute() 
+        q = p / DATASETS_FOLDER
+        Path(q).mkdir(parents=True, exist_ok=True)
+        csv_filepath = q / FILENAME
 
-        return data
-    
+        # Write response text to the csv file
+        with open(csv_filepath, 'w', encoding='utf-8') as f:
+            f.write(r.text)
+
+        print('Création du fichier réalisée avec succès.')
     else:
+        print(f'Erreur : status_code {r.status_code} - {r.reason}')
 
-        return []
+
+def search_city(query: str) -> requests.Response:
+    """Search for an adresse with the Adresse API.
+
+    Args:
+        query (str): searched city.
+
+    Returns:
+        requests.Response: response from the API.
+    """
+    r = requests.get(
+    constants.ADRESS_SEARCH_URL,
+    params={
+        'q': query,
+        'type': 'municipality',
+        'limit': 5,
+        'autocomplete': 0
+    }
+)
+    
+    return r
+
+
+def _reverse_search_city(lat_lon: list) -> requests.Response:
+    """search a city from its coordinates.
+
+    Args:
+        lat_lon (list): city coordinates.
+
+    Returns:
+        requests.Response: response from the API or an empty list if no result
+        found.
+    """
+    lat = lat_lon[0]
+    lon = lat_lon[1]
+    x = len(str(lat))
+
+    while x > 0:
+        url = constants.REVERSE_ADRESS_URL
+        payload = {
+            'lon': lon,
+            'lat': str(lat)[:x],
+            'type': 'street',
+            'limit': 1
+        }
+        r = requests.get(url, params=payload)
+
+        if r.json().get('features'):
+                return r.json().get('features')[0]
+        else:
+            x -= 1
+    
+    return r.json().get('features')
+    
     
 
-def find_nearest_stations(df, lat_lon):
-    '''
-    Calculate the geodesic distance between coordinates (defined in 'latitude' 
-    and 'longitude' columns) and a specified [lat, lon] list for each row of 
-    the DataFrame.
 
-    Parameters :
-    - df : DataFrame including latitude and longitude columns ;
-    - lat_lon : pair of [latitude, longitude] in a list.
 
-    Returns the 5 nearest stations information in dictionnary.
-    '''
+    #     result = r.json()['features']
+
+    #     if result:
+    #         result = result[0]
+    #         break
+
+    #     x -= 1
+
+    # if not result:
+    #     return {'city': '-', 'context': '-'}
+    
+    # return  {
+    #         'city': result['properties']['city'],
+    #         'context': result['properties']['context']
+    #     }
+    # return r
+
+
+def _get_nearest_station_information(lat_lon: list) -> dict:
+    """Get information for the nearest observation station calculated with
+    geodesic distance.
+
+    Args:
+        lat_lon (list): coordinates to calculate distance from. 
+
+    Returns:
+        dict: nearest station information.
+    """
+    df = pd.read_csv(
+        constants.WEATHER_STATION_LIST_PATH,
+        sep=';',
+        dtype={'Id_station': object},
+        parse_dates=['Date_ouverture']
+    )
+
+    df.columns = df.columns.str.lower()
+    df['nom_usuel'] = df['nom_usuel'].str.title()
+
     if ('latitude' and 'longitude' in df.columns) and lat_lon:
         df['distance'] = df.apply(
             lambda x: distance.distance(
@@ -71,87 +138,64 @@ def find_nearest_stations(df, lat_lon):
                 axis='columns'
         )
 
-        data = df.nsmallest(5, 'distance').to_dict('records')
-
-        return data    
+        return df.nsmallest(1, 'distance').to_dict('records')[0]
 
 
-def reverse_geocoding(lat_lon):
-    '''
-    Apply reverse geocoding from latitude and longitude.
+def filter_nearest_station_information(lat_lon: list) -> dict:
+    """Get and filter information for the nearest station to only provide
+    what is useful for the STreamlit app.
 
-    Parameters :
-    - lat_lon : pair of [latitude, longitude] in a list.
+    Args:
+        lat_lon (list): city coordinates.
 
-    Returns the city and the context.
-    '''
-    lat = lat_lon[0]
-    lon = lat_lon[1]
-    x = len(str(lat))
+    Returns:
+        dict: nearest station information.
+    """
+    station_info = _get_nearest_station_information(lat_lon)
 
-    while x > 0:
+    reverse_info = _reverse_search_city([station_info['latitude'],
+                                         station_info['longitude']])
 
-        url = 'https://api-adresse.data.gouv.fr/reverse/'
-        payload = {
-            'lon': lon,
-            'lat': str(lat)[:x],
-            'type': 'street',
-            'limit': 1
-        }
-        r = requests.get(url, params=payload)
-        result = r.json()['features']
+    if not reverse_info:
+        reverse_info = {'properties': {'city': '-', 'context': '-'}}
 
-        if result:
-            result = result[0]
-            break
-
-        x -= 1
-
-    if result:
-        data = {
-            'city': result['properties']['city'],
-            'context': result['properties']['context']
-        }
-    else:
-        data = {
-            'city': '-',
-            'context': '-'
-        }
-            
-    return data
+    return {
+        'id_station': station_info.get('id_station'),
+        'nom_usuel': station_info.get('nom_usuel'),
+        'date_ouverture': station_info.get('date_ouverture'),
+        'altitude': station_info.get('altitude'),
+        'distance': station_info.get('distance'),
+        'city': reverse_info.get('properties').get('city'),
+        'context': reverse_info.get('properties').get('context')
+    }
 
 
-def datetime_tz_convert(input_dt: str, direction: str):
-    '''
-    Convert timezone of a date and time.
+def calculate_delta(x: float, y: float, rel_tol: float) -> float:
+    """Calculates the difference between two numbers.
 
-    Parameters :
-    - input_dt : date to convert in ISO 8601 format with 
-    TZ UTC AAAA-MM-JJThh:00:00Z ;
-    - direction : define if conversion is UTC to local or local to UTC.
+    Args:
+        x (float): first number ;
+        y (float): second number ;
+        rel_tol (float): maximum difference for being considered 'close', 
+        relative to the magnitude of the input values.
 
-    Returns converted date in ISO 8601 format with 
-    TZ UTC AAAA-MM-JJThh:00:00Z.
-    '''
+    Returns:
+        float: delta
+    """
+    if x is None or y is None:
+        return None
+    
+    # Check if delta is close to 0
+    if math.isclose(x, y, rel_tol=rel_tol):
+        return None    
+    
+    return x - y
+ 
 
-    # Set timezones
-    UTC_TZ = pytz.timezone('UTC')
-    LOCAL_TZ = pytz.timezone('Europe/Paris')
+def main():
+    test = calculate_delta(282.15, 282.65, 0)
 
-    if direction == 'utc_to_local':
-        # Convert date and time information from UTC to local timezone
-        time_utc = datetime.strptime(input_dt, '%Y-%m-%dT%H:%M:%SZ')
-        # Add timezone to UTC time
-        time_utc = UTC_TZ.localize(time_utc)
-        time_local = time_utc.astimezone(LOCAL_TZ).strftime('%Y-%m-%dT%H:%M:%SZ')
+    print(test)
 
-        return time_local
-
-    elif direction == 'local_to_utc':
-        # Convert date and time information from local to UTC timezone
-        time_local = datetime.strptime(input_dt, '%Y-%m-%dT%H:%M:%SZ')
-        # Add timezone to LOCAL time
-        time_local= LOCAL_TZ.localize(time_local)
-        time_utc = time_local.astimezone(UTC_TZ).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-        return time_utc
+if __name__ == '__main__':
+    main()
