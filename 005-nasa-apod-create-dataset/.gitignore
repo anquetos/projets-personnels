@@ -1,11 +1,12 @@
-# Fichier contenant ma clé personnelle
+# File with personnal api key
 api_key.json
 
-# Dossier contenant résultats des tests
+# Folders
 /test/
-
-# Dossier contenant les fichiers JSON
 /json/
 
-# Fichier draw.io
-nasa-apod-process.drawio
+# draw.io file
+nasa-apod-steps.drawio
+
+# WIP
+nasa-apod-update-csv.ipynb
